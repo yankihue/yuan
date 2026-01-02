@@ -18,7 +18,7 @@ import { SessionManager } from './state/session.js';
 interface ServerConfig {
   port: number;
   secret: string;
-  anthropicApiKey: string;
+  anthropicApiKey?: string; // Optional: if not set, uses manual login
   codexCommand?: string;
   codexArgs?: string[];
   workingDirectory?: string;

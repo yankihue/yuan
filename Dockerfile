@@ -22,6 +22,9 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages ./packages
 RUN npm prune --omit=dev
 
+# Install Claude Code CLI globally
+RUN npm install -g @anthropic-ai/claude-code
+
 FROM runtime AS orchestrator
 WORKDIR /app/packages/orchestrator
 EXPOSE 3000

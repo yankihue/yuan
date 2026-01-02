@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   const server = new OrchestratorServer({
     port: parseInt(getOptionalEnv('ORCHESTRATOR_PORT', '3000'), 10),
     secret: getRequiredEnv('ORCHESTRATOR_SECRET'),
-    anthropicApiKey: getRequiredEnv('ANTHROPIC_API_KEY'),
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY, // Optional: if not set, uses manual login
     codexCommand,
     codexArgs,
     workingDirectory: process.env.WORKING_DIRECTORY || process.cwd(),

@@ -11,6 +11,9 @@ services:
       - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-3000}
     ports:
       - "${ORCHESTRATOR_PORT:-3000}:3000"
+    volumes:
+      # Mount Claude credentials for manual login (run 'claude login' on host first)
+      - ~/.claude:/root/.claude:ro
     restart: unless-stopped
 
   telegram-bot:

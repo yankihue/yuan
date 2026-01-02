@@ -14,7 +14,7 @@ import { ApprovalGate } from '../approval/gate.js';
 import { v4 as uuidv4 } from 'uuid';
 
 interface ClaudeSessionConfig {
-  anthropicApiKey: string;
+  anthropicApiKey?: string; // Optional: if not set, uses manual login
   workingDirectory?: string;
   sessionManager?: SessionManager;
   approvalGate: ApprovalGate;
@@ -178,12 +178,15 @@ export class ClaudeCodeSession extends EventEmitter {
         prompt
       ];
 
+      // Build environment - only include API key if provided (otherwise uses manual login)
+      const spawnEnv = { ...process.env };
+      if (this.config.anthropicApiKey) {
+        spawnEnv.ANTHROPIC_API_KEY = this.config.anthropicApiKey;
+      }
+
       this.currentProcess = spawn('claude', args, {
         cwd: workingDir,
-        env: {
-          ...process.env,
-          ANTHROPIC_API_KEY: this.config.anthropicApiKey,
-        },
+        env: spawnEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 

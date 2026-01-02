@@ -19,9 +19,9 @@ interface RunningSubAgent extends SubAgent {
 
 export class SubAgentManager extends EventEmitter {
   private runningAgents: Map<string, RunningSubAgent> = new Map();
-  private anthropicApiKey: string;
+  private anthropicApiKey?: string;
 
-  constructor(anthropicApiKey: string) {
+  constructor(anthropicApiKey?: string) {
     super();
     this.anthropicApiKey = anthropicApiKey;
   }
@@ -86,12 +86,15 @@ If you encounter any issues that require user input, stop and describe what you 
         prompt
       ];
 
+      // Build environment - only include API key if provided (otherwise uses manual login)
+      const spawnEnv = { ...process.env };
+      if (this.anthropicApiKey) {
+        spawnEnv.ANTHROPIC_API_KEY = this.anthropicApiKey;
+      }
+
       const proc = spawn('claude', args, {
         cwd: request.workingDirectory,
-        env: {
-          ...process.env,
-          ANTHROPIC_API_KEY: this.anthropicApiKey,
-        },
+        env: spawnEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
