@@ -17,6 +17,9 @@ FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Install git and GitHub CLI for code operations
+RUN apk add --no-cache git github-cli
+
 COPY --from=builder /app/package.json /app/package-lock.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages ./packages
