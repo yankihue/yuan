@@ -1,0 +1,27 @@
+version: '3.9'
+
+services:
+  orchestrator:
+    build:
+      context: .
+      target: orchestrator
+    env_file:
+      - .env
+    environment:
+      - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-3000}
+    ports:
+      - "${ORCHESTRATOR_PORT:-3000}:3000"
+    restart: unless-stopped
+
+  telegram-bot:
+    build:
+      context: .
+      target: telegram-bot
+    env_file:
+      - .env
+    depends_on:
+      - orchestrator
+    environment:
+      - ORCHESTRATOR_HOST=orchestrator
+      - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-3000}
+    restart: unless-stopped
