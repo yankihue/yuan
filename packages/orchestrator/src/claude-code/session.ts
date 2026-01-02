@@ -181,9 +181,10 @@ export class ClaudeCodeSession extends EventEmitter {
 
       // Spawn Claude Code CLI in non-interactive mode
       const args = [
-        '--print',           // Non-interactive print mode
-        '--output-format', 'stream-json',  // JSON streaming output
-        prompt
+        '--print', // Non-interactive print mode
+        '--verbose', // Required for stream-json output
+        '--output-format', 'stream-json', // JSON streaming output
+        '--input-format', 'stream-json', // Stream input over stdin
       ];
 
       // Build environment - only include API key if provided (otherwise uses manual login)
@@ -196,6 +197,27 @@ export class ClaudeCodeSession extends EventEmitter {
         cwd: workingDir,
         env: spawnEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      if (!this.currentProcess.stdin) {
+        this.sessionManager.failTask();
+        reject(new Error('Claude Code stdin is not available.'));
+        return;
+      }
+
+      const initialMessage = JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: prompt }],
+        },
+      });
+
+      this.currentProcess.stdin.write(`${initialMessage}\n`, (err) => {
+        if (err) {
+          this.sessionManager.failTask();
+          reject(new Error(`Failed to send prompt to Claude Code: ${err.message}`));
+        }
       });
 
       let fullResponse = '';
@@ -586,8 +608,16 @@ export class ClaudeCodeSession extends EventEmitter {
       return false;
     }
 
+    const inputMessage = JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: response }],
+      },
+    });
+
     return new Promise((resolve) => {
-      this.currentProcess!.stdin!.write(`${response}\n`, (err) => {
+      this.currentProcess!.stdin!.write(`${inputMessage}\n`, (err) => {
         if (err) {
           console.error('Failed to write input to Claude Code process:', err);
           resolve(false);

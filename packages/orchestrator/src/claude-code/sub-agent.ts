@@ -82,8 +82,9 @@ If you encounter any issues that require user input, stop and describe what you 
 
       const args = [
         '--print',
+        '--verbose',
         '--output-format', 'stream-json',
-        prompt
+        '--input-format', 'stream-json',
       ];
 
       // Build environment - only include API key if provided (otherwise uses manual login)
@@ -99,6 +100,19 @@ If you encounter any issues that require user input, stop and describe what you 
       });
 
       agent.process = proc;
+
+      if (proc.stdin) {
+        const initialMessage = JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: prompt }],
+          },
+        });
+        proc.stdin.end(`${initialMessage}\n`);
+      } else {
+        console.error(`Sub-agent ${agent.id} stdin unavailable; cannot send prompt.`);
+      }
 
       let lastMessage = '';
       let buffer = '';
