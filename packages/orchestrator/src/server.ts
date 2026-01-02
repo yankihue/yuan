@@ -1,7 +1,14 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
-import type { Instruction, ApprovalResponse, OrchestratorUpdate, StatusResponse, AgentType } from './types.js';
+import type {
+  Instruction,
+  ApprovalResponse,
+  OrchestratorUpdate,
+  StatusResponse,
+  AgentType,
+  InputResponse,
+} from './types.js';
 import { ClaudeCodeSession } from './claude-code/session.js';
 import { SubAgentManager } from './claude-code/sub-agent.js';
 import { CodexSession } from './codex/session.js';
@@ -28,6 +35,7 @@ export class OrchestratorServer {
   private subAgentManager: SubAgentManager;
   private approvalGate: ApprovalGate;
   private sessionManager: SessionManager;
+  private pendingInputs: Map<string, { userId: string; agent: AgentType }>;
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -37,6 +45,7 @@ export class OrchestratorServer {
 
     this.approvalGate = new ApprovalGate();
     this.sessionManager = new SessionManager();
+    this.pendingInputs = new Map();
 
     // Initialize Claude Code session
     this.claudeSession = new ClaudeCodeSession({
@@ -103,6 +112,7 @@ export class OrchestratorServer {
     this.app.post('/instruction', async (req: Request, res: Response) => {
       try {
         const instruction: Instruction = req.body;
+        this.clearPendingInputsForUser(instruction.userId);
 
         console.log(`Received instruction from user ${instruction.userId}: ${instruction.instruction.substring(0, 50)}...`);
 
@@ -136,6 +146,41 @@ export class OrchestratorServer {
       } catch (error) {
         console.error('Error processing instruction:', error);
         res.status(500).json({ error: 'Failed to process instruction' });
+      }
+    });
+
+    // Receive input responses from bot
+    this.app.post('/input-response', async (req: Request, res: Response) => {
+      try {
+        const inputResponse: InputResponse = req.body;
+        const pending = this.pendingInputs.get(inputResponse.inputId);
+
+        if (!pending || pending.userId !== inputResponse.userId) {
+          res.status(404).json({ error: 'Input request not found or already resolved' });
+          return;
+        }
+
+        if (pending.agent === 'codex') {
+          res.status(400).json({ error: 'Input responses for Codex sessions are not supported yet' });
+          return;
+        }
+
+        const success = await this.claudeSession.submitInputResponse(
+          inputResponse.userId,
+          inputResponse.inputId,
+          inputResponse.response
+        );
+
+        if (!success) {
+          res.status(400).json({ error: 'Failed to process input response' });
+          return;
+        }
+
+        this.pendingInputs.delete(inputResponse.inputId);
+        res.json({ status: 'accepted' });
+      } catch (error) {
+        console.error('Error processing input response:', error);
+        res.status(500).json({ error: 'Failed to process input response' });
       }
     });
 
@@ -239,6 +284,7 @@ export class OrchestratorServer {
   }
 
   private broadcastUpdate(update: OrchestratorUpdate): void {
+    this.updatePendingInputState(update);
     const message = JSON.stringify(update);
 
     for (const client of this.clients) {
@@ -281,6 +327,28 @@ export class OrchestratorServer {
       this.claudeSession.isCurrentlyProcessing() ||
       this.codexSession.isCurrentlyProcessing()
     );
+  }
+
+  private updatePendingInputState(update: OrchestratorUpdate): void {
+    if (update.type === 'INPUT_NEEDED' && update.inputId) {
+      this.pendingInputs.set(update.inputId, {
+        userId: update.userId,
+        agent: update.agent ?? 'claude',
+      });
+      return;
+    }
+
+    if (update.type === 'TASK_COMPLETE' || update.type === 'ERROR') {
+      this.clearPendingInputsForUser(update.userId);
+    }
+  }
+
+  private clearPendingInputsForUser(userId: string): void {
+    for (const [inputId, pending] of this.pendingInputs.entries()) {
+      if (pending.userId === userId) {
+        this.pendingInputs.delete(inputId);
+      }
+    }
   }
 
   async start(): Promise<void> {

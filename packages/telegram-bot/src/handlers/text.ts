@@ -5,6 +5,7 @@ import type { VoiceHandler } from './voice.js';
 export class TextHandler {
   private orchestratorClient: OrchestratorClient;
   private voiceHandler: VoiceHandler;
+  private pendingInputs: Map<string, { inputId: string; expectedInputFormat?: string }> = new Map();
 
   constructor(
     orchestratorClient: OrchestratorClient,
@@ -25,8 +26,37 @@ export class TextHandler {
 
     console.log(`Received text message from user ${userId}: "${text.substring(0, 50)}..."`);
 
+    // Flush any pending voice messages first
+    const voiceTranscription = await this.voiceHandler.flushBuffer(userId, ctx);
+
+    // Combine voice transcription with text if present
+    let instruction = text;
+    if (voiceTranscription) {
+      instruction = `${voiceTranscription} ${text}`;
+    }
+
+    const userIdStr = userId.toString();
+    const pendingInput = this.pendingInputs.get(userIdStr);
+
+    if (pendingInput) {
+      await ctx.api.sendChatAction(chatId, 'typing');
+      try {
+        await this.orchestratorClient.sendInputResponse({
+          userId: userIdStr,
+          inputId: pendingInput.inputId,
+          response: instruction,
+        });
+        this.pendingInputs.delete(userIdStr);
+        await ctx.reply('✅ Got it! Passing your response back to the task.');
+      } catch (error) {
+        console.error('Failed to send input response to orchestrator:', error);
+        await ctx.reply('❌ Sorry, I couldn\'t deliver your response. Please try again.');
+      }
+      return;
+    }
+
     // Check for special commands
-    const lowerText = text.toLowerCase().trim();
+    const lowerText = instruction.toLowerCase().trim();
 
     if (lowerText === 'status') {
       await this.handleStatusCommand(ctx, userId);
@@ -36,15 +66,6 @@ export class TextHandler {
     if (lowerText === 'cancel') {
       await this.handleCancelCommand(ctx);
       return;
-    }
-
-    // Flush any pending voice messages first
-    const voiceTranscription = await this.voiceHandler.flushBuffer(userId, ctx);
-
-    // Combine voice transcription with text if present
-    let instruction = text;
-    if (voiceTranscription) {
-      instruction = `${voiceTranscription} ${text}`;
     }
 
     // Send instruction to orchestrator
@@ -58,10 +79,18 @@ export class TextHandler {
         timestamp: new Date(),
       });
     } catch (error) {
-      console.error('Failed to send instruction to orchestrator:', error);
-      await ctx.reply('❌ Sorry, I couldn\'t connect to the processing server. Please try again later.')
-        .catch(console.error);
+        console.error('Failed to send instruction to orchestrator:', error);
+        await ctx.reply('❌ Sorry, I couldn\'t connect to the processing server. Please try again later.')
+          .catch(console.error);
     }
+  }
+
+  setPendingInput(userId: string, inputId: string, expectedInputFormat?: string): void {
+    this.pendingInputs.set(userId, { inputId, expectedInputFormat });
+  }
+
+  clearPendingInput(userId: string): void {
+    this.pendingInputs.delete(userId);
   }
 
   private async handleStatusCommand(ctx: Context, userId: number): Promise<void> {

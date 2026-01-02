@@ -176,6 +176,11 @@ export class TelegramBot {
             `❓ *Input Needed*\n\n${update.message}`,
             { parse_mode: 'Markdown' }
           );
+          if (update.inputId) {
+            this.textHandler.setPendingInput(update.userId, update.inputId, update.expectedInputFormat);
+          } else {
+            console.warn('Received INPUT_NEEDED update without inputId');
+          }
           break;
 
         case 'APPROVAL_REQUIRED':
@@ -183,10 +188,12 @@ export class TelegramBot {
           break;
 
         case 'TASK_COMPLETE':
+          this.textHandler.clearPendingInput(update.userId);
           await this.bot.api.sendMessage(chatId, `✅ ${update.message}`);
           break;
 
         case 'ERROR':
+          this.textHandler.clearPendingInput(update.userId);
           await this.bot.api.sendMessage(chatId, `❌ *Error*\n\n${update.message}`, {
             parse_mode: 'Markdown',
           });

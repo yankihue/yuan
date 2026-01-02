@@ -5,6 +5,7 @@ import { SessionManager } from '../state/session.js';
 import { IntentParser } from './parser.js';
 import { ApprovalDetector, type DetectedApproval } from '../approval/detector.js';
 import { ApprovalGate } from '../approval/gate.js';
+import { v4 as uuidv4 } from 'uuid';
 
 interface ClaudeSessionConfig {
   anthropicApiKey: string;
@@ -20,6 +21,16 @@ interface StreamMessage {
   tool?: string;
   tool_input?: unknown;
   result?: string;
+  id?: string;
+  input_schema?: unknown;
+  prompt?: string;
+  name?: string;
+}
+
+interface PendingInput {
+  userId: string;
+  prompt: string;
+  expectedFormat?: string;
 }
 
 export class ClaudeCodeSession extends EventEmitter {
@@ -32,6 +43,7 @@ export class ClaudeCodeSession extends EventEmitter {
   private isProcessing = false;
   private currentProcess: ChildProcess | null = null;
   private agentType: AgentType;
+  private pendingInputs: Map<string, PendingInput> = new Map();
 
   constructor(config: ClaudeSessionConfig) {
     super();
@@ -131,6 +143,8 @@ export class ClaudeCodeSession extends EventEmitter {
     userId: string,
     _task: TaskInfo
   ): Promise<void> {
+    this.pendingInputs.clear();
+
     return new Promise((resolve, reject) => {
       const workingDir = this.config.workingDirectory || process.cwd();
 
@@ -190,6 +204,8 @@ export class ClaudeCodeSession extends EventEmitter {
       });
 
       this.currentProcess.on('close', async (code) => {
+        this.pendingInputs.clear();
+
         // Process any remaining buffer
         if (buffer.trim()) {
           try {
@@ -275,6 +291,27 @@ export class ClaudeCodeSession extends EventEmitter {
     message: StreamMessage,
     userId: string
   ): void {
+    const inputPrompt = this.extractInputPrompt(message);
+    if (inputPrompt) {
+      const inputId = inputPrompt.inputId ?? uuidv4();
+      this.pendingInputs.set(inputId, {
+        userId,
+        prompt: inputPrompt.prompt,
+        expectedFormat: inputPrompt.expectedFormat,
+      });
+      this.sessionManager.updateTaskStatus('waiting_input');
+
+      this.emit('update', {
+        type: 'INPUT_NEEDED',
+        userId,
+        message: inputPrompt.prompt,
+        agent: this.agentType,
+        inputId,
+        expectedInputFormat: inputPrompt.expectedFormat,
+      } as OrchestratorUpdate);
+      return;
+    }
+
     // Handle different message types from the stream
     if (message.type === 'tool_use' && message.tool) {
       // Check if this tool use requires approval
@@ -301,6 +338,46 @@ export class ClaudeCodeSession extends EventEmitter {
         } as OrchestratorUpdate);
       }
     }
+  }
+
+  private extractInputPrompt(
+    message: StreamMessage
+  ): { prompt: string; inputId?: string; expectedFormat?: string } | null {
+    // Detect direct input request message types
+    if (message.type === 'input_text' || message.type === 'input_json') {
+      const prompt = message.prompt || message.content;
+      if (prompt) {
+        return {
+          prompt,
+          inputId: message.id,
+          expectedFormat: message.type === 'input_json' ? 'json' : 'text',
+        };
+      }
+    }
+
+    // Detect designated tool-based prompts
+    if (message.type === 'tool_use' && message.tool_input) {
+      const toolInput = message.tool_input as Record<string, unknown>;
+      const prompt = typeof toolInput.prompt === 'string'
+        ? toolInput.prompt
+        : typeof message.content === 'string'
+          ? message.content
+          : undefined;
+
+      if (prompt) {
+        const expectedFormat =
+          typeof toolInput.format === 'string'
+            ? toolInput.format
+            : toolInput.input_schema
+              ? 'json'
+              : undefined;
+
+        const inputId = typeof toolInput.id === 'string' ? toolInput.id : message.id;
+        return { prompt, inputId, expectedFormat };
+      }
+    }
+
+    return null;
   }
 
   private extractTaskDescription(instruction: string): string {
@@ -354,6 +431,42 @@ export class ClaudeCodeSession extends EventEmitter {
       this.isProcessing = false;
       this.sessionManager.failTask();
     }
+  }
+
+  async submitInputResponse(
+    userId: string,
+    inputId: string,
+    response: string
+  ): Promise<boolean> {
+    const pending = this.pendingInputs.get(inputId);
+    if (!pending || pending.userId !== userId) {
+      return false;
+    }
+
+    if (!this.currentProcess || !this.currentProcess.stdin) {
+      return false;
+    }
+
+    return new Promise((resolve) => {
+      this.currentProcess!.stdin!.write(`${response}\n`, (err) => {
+        if (err) {
+          console.error('Failed to write input to Claude Code process:', err);
+          resolve(false);
+          return;
+        }
+
+        this.pendingInputs.delete(inputId);
+        this.sessionManager.updateTaskStatus('running');
+
+        this.emit('update', {
+          type: 'STATUS_UPDATE',
+          userId,
+          message: '✏️ Received your input, resuming the task.',
+          agent: this.agentType,
+        } as OrchestratorUpdate);
+        resolve(true);
+      });
+    });
   }
 
   clearHistory(): void {
