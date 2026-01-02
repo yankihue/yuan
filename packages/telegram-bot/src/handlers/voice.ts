@@ -145,7 +145,8 @@ export class VoiceHandler {
         console.log(`Transcribed: "${text.substring(0, 50)}..."`);
       } catch (error) {
         console.error('Failed to transcribe voice message:', error);
-        await ctx.reply('❌ I couldn\'t transcribe one of your voice messages. Please try recording again.')
+        const message = this.buildTranscriptionErrorMessage(error);
+        await ctx.reply(message)
           .catch(console.error);
       }
     }
@@ -162,5 +163,32 @@ export class VoiceHandler {
     }).catch(console.error);
 
     return combinedTranscription;
+  }
+
+  private buildTranscriptionErrorMessage(error: unknown): string {
+    const details = error instanceof Error ? error.message : String(error);
+
+    if (details.includes('Python/faster-whisper not found')) {
+      return [
+        '❌ Local transcription is missing python3/faster-whisper.',
+        'Install them in the telegram-bot container or set TRANSCRIPTION_PROVIDER=openai with OPENAI_API_KEY.',
+      ].join('\n');
+    }
+
+    if (details.includes('whisper.cpp not found')) {
+      return [
+        '❌ Local transcription could not find whisper.cpp.',
+        'Install whisper.cpp and set WHISPER_BINARY_PATH and WHISPER_MODEL_PATH, or use TRANSCRIPTION_PROVIDER=openai.',
+      ].join('\n');
+    }
+
+    if (details.includes('ffmpeg not found')) {
+      return [
+        '❌ ffmpeg is missing in the telegram-bot container.',
+        'Install ffmpeg or switch to TRANSCRIPTION_PROVIDER=openai.',
+      ].join('\n');
+    }
+
+    return '❌ I could not transcribe that voice message. Please try again.';
   }
 }

@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { spawn } from 'child_process';
-import { writeFile, unlink, mkdir } from 'fs/promises';
+import { writeFile, unlink, mkdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
@@ -109,6 +109,8 @@ class LocalWhisperService implements TranscriptionService {
 
     const inputFile = join(this.tempDir, `${randomUUID()}.${format}`);
     const wavFile = join(this.tempDir, `${randomUUID()}.wav`);
+    const outputBase = join(this.tempDir, `${randomUUID()}`);
+    const outputTxt = `${outputBase}.txt`;
 
     try {
       // Write audio buffer to temp file
@@ -118,13 +120,14 @@ class LocalWhisperService implements TranscriptionService {
       await this.convertToWav(inputFile, wavFile);
 
       // Run whisper.cpp
-      const transcription = await this.runWhisper(wavFile);
+      const transcription = await this.runWhisper(wavFile, outputBase);
 
       return transcription.trim();
     } finally {
       // Cleanup temp files
       await unlink(inputFile).catch(() => {});
       await unlink(wavFile).catch(() => {});
+      await unlink(outputTxt).catch(() => {});
     }
   }
 
@@ -161,10 +164,10 @@ class LocalWhisperService implements TranscriptionService {
     });
   }
 
-  private runWhisper(wavFile: string): Promise<string> {
+  private runWhisper(wavFile: string, outputBase: string): Promise<string> {
     return new Promise((resolve, reject) => {
       // Try whisper.cpp first, fall back to faster-whisper
-      this.runWhisperCpp(wavFile)
+      this.runWhisperCpp(wavFile, outputBase)
         .then(resolve)
         .catch(() => {
           // Fall back to faster-whisper (Python)
@@ -175,14 +178,15 @@ class LocalWhisperService implements TranscriptionService {
     });
   }
 
-  private runWhisperCpp(wavFile: string): Promise<string> {
+  private runWhisperCpp(wavFile: string, outputBase: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const args = [
         '-m', this.modelPath,
         '-f', wavFile,
         '-np',        // No prints
         '-nt',        // No timestamps
-        '--output-txt'
+        '--output-txt',
+        '-of', outputBase,
       ];
 
       const whisper = spawn(this.binaryPath, args, {
@@ -206,7 +210,12 @@ class LocalWhisperService implements TranscriptionService {
 
       whisper.on('close', (code) => {
         if (code === 0) {
-          resolve(stdout);
+          const outputFile = `${outputBase}.txt`;
+          readFile(outputFile, 'utf8')
+            .then((contents) => resolve(contents))
+            .catch((readError) => {
+              reject(new Error(`whisper.cpp output missing: ${readError.message}`));
+            });
         } else {
           reject(new Error(`whisper.cpp failed: ${stderr}`));
         }
