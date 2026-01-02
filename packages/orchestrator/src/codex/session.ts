@@ -304,15 +304,6 @@ export class CodexSession extends EventEmitter {
     return task.substring(0, 97).trim() + '...';
   }
 
-  cancelCurrentTask(): void {
-    if (this.currentProcess) {
-      this.currentProcess.kill('SIGTERM');
-      this.currentProcess = null;
-      this.isProcessing = false;
-      this.sessionManager.failTask();
-    }
-  }
-
   private summarizeResponse(response: string): string {
     const lines = response.split('\n').filter((l) => l.trim());
 
