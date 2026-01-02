@@ -187,6 +187,58 @@ export class OrchestratorServer {
         res.status(500).json({ error: 'Failed to get status' });
       }
     });
+
+    this.app.post('/cancel', (req: Request, res: Response) => {
+      try {
+        const { userId } = req.body as { userId?: string };
+
+        if (!userId) {
+          res.status(400).json({ error: 'userId is required' });
+          return;
+        }
+
+        const currentTask = this.sessionManager.getCurrentTask();
+        let cancelledTask = false;
+        let agent: AgentType | undefined;
+
+        if (currentTask && currentTask.userId === userId && currentTask.status === 'running') {
+          agent = currentTask.agent;
+
+          if (currentTask.agent === 'claude') {
+            this.claudeSession.cancelCurrentTask();
+          } else {
+            this.codexSession.cancelCurrentTask();
+          }
+          cancelledTask = true;
+        }
+
+        const cancelledSubAgents = this.subAgentManager.cancelAllForUser(userId);
+        this.approvalGate.cancelAllForUser(userId);
+
+        const totalStopped = (cancelledTask ? 1 : 0) + cancelledSubAgents;
+        const message = totalStopped > 0
+          ? `⏹️ Cancelled tasks. Stopped ${totalStopped} task(s) (${cancelledSubAgents} sub-agent(s)).`
+          : 'ℹ️ No active tasks to cancel.';
+
+        if (totalStopped > 0) {
+          this.broadcastUpdate({
+            type: 'STATUS_UPDATE',
+            userId,
+            message,
+            agent,
+          });
+        }
+
+        res.json({
+          cancelledTask,
+          cancelledSubAgents,
+          message,
+        });
+      } catch (error) {
+        console.error('Error cancelling tasks:', error);
+        res.status(500).json({ error: 'Failed to cancel tasks' });
+      }
+    });
   }
 
   private setupWebSocket(): void {

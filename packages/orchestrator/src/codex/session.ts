@@ -308,4 +308,13 @@ export class CodexSession extends EventEmitter {
 
     return 'Task completed successfully.';
   }
+
+  cancelCurrentTask(): void {
+    if (this.currentProcess) {
+      this.currentProcess.kill('SIGTERM');
+      this.currentProcess = null;
+    }
+    this.isProcessing = false;
+    this.sessionManager.failTask();
+  }
 }

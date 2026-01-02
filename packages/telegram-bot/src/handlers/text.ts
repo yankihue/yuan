@@ -105,9 +105,27 @@ export class TextHandler {
   }
 
   private async handleCancelCommand(ctx: Context): Promise<void> {
-    await ctx.reply('⚠️ Cancel command received. Attempting to stop current task...');
-    // TODO: Implement cancel functionality in orchestrator
-    await ctx.reply('ℹ️ Cancel functionality will be available in a future update.');
+    const userId = ctx.from?.id;
+    const chatId = ctx.chat?.id;
+
+    if (!userId || !chatId) {
+      return;
+    }
+
+    try {
+      await ctx.api.sendChatAction(chatId, 'typing');
+      const result = await this.orchestratorClient.cancelTasks(userId.toString());
+
+      const totalStopped = (result.cancelledTask ? 1 : 0) + result.cancelledSubAgents;
+      const responseMessage = totalStopped > 0
+        ? `🛑 Stopped ${totalStopped} task${totalStopped === 1 ? '' : 's'} (${result.cancelledSubAgents} sub-agent${result.cancelledSubAgents === 1 ? '' : 's'}).`
+        : 'ℹ️ No active tasks to cancel.';
+
+      await ctx.reply(responseMessage);
+    } catch (error) {
+      console.error('Failed to cancel tasks:', error);
+      await ctx.reply('❌ Failed to cancel current tasks. Please try again.');
+    }
   }
 
   private formatTime(date: Date): string {
