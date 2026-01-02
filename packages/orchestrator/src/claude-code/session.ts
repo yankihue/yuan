@@ -187,7 +187,6 @@ export class ClaudeCodeSession extends EventEmitter {
         '--verbose', // Required for stream-json output
         '--output-format', 'stream-json', // JSON streaming output
         '--input-format', 'stream-json', // Stream input over stdin
-        '--dangerously-skip-permissions', // Skip permission prompts for automated use
       ];
 
       // Build environment - only include API key if provided (otherwise uses manual login)
