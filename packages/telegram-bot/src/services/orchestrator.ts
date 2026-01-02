@@ -145,6 +145,22 @@ export class OrchestratorClient extends EventEmitter {
     return response.json() as Promise<StatusResponse>;
   }
 
+  async resetConversation(userId: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/reset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.config.secret}`,
+      },
+      body: JSON.stringify({ userId }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to reset conversation: ${response.status} ${text}`);
+    }
+  }
+
   disconnect(): void {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);

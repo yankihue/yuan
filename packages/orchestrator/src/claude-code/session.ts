@@ -1,6 +1,12 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import type { AgentType, ConversationMessage, OrchestratorUpdate, TaskInfo } from '../types.js';
+import type {
+  AgentType,
+  ConversationMessage,
+  ConversationOptions,
+  OrchestratorUpdate,
+  TaskInfo,
+} from '../types.js';
 import { SessionManager } from '../state/session.js';
 import { IntentParser } from './parser.js';
 import { ApprovalDetector, type DetectedApproval } from '../approval/detector.js';
@@ -29,6 +35,11 @@ export class ClaudeCodeSession extends EventEmitter {
   private approvalDetector: ApprovalDetector;
   private approvalGate: ApprovalGate;
   private conversationHistory: ConversationMessage[] = [];
+  private conversationOptions: ConversationOptions = {
+    includeHistory: true,
+    maxTurns: 20,
+    maxTokens: 2000,
+  };
   private isProcessing = false;
   private currentProcess: ChildProcess | null = null;
   private agentType: AgentType;
@@ -97,15 +108,7 @@ export class ClaudeCodeSession extends EventEmitter {
         agent: this.agentType,
       } as OrchestratorUpdate);
 
-      // Build the prompt with context
-      const contextPrompt = this.intentParser.buildContextPrompt();
-      const fullPrompt = contextPrompt + instruction;
-
-      // Add to conversation history
-      this.conversationHistory.push({
-        role: 'user',
-        content: fullPrompt,
-      });
+      const fullPrompt = this.buildPromptWithHistory(instruction, userId);
 
       // Execute with Claude Code CLI
       await this.executeWithClaudeCodeCLI(fullPrompt, userId, task);
@@ -246,13 +249,7 @@ export class ClaudeCodeSession extends EventEmitter {
           }
         }
 
-        // Add assistant response to history
-        if (fullResponse) {
-          this.conversationHistory.push({
-            role: 'assistant',
-            content: fullResponse,
-          });
-        }
+        this.appendAssistantResponse(fullResponse, userId);
 
         // Mark task as complete
         this.sessionManager.completeTask();
@@ -360,7 +357,45 @@ export class ClaudeCodeSession extends EventEmitter {
     this.conversationHistory = [];
   }
 
+  clearUserHistory(userId: string): void {
+    this.sessionManager.clearConversation(userId);
+    this.conversationHistory = [];
+  }
+
   getConversationHistory(): ConversationMessage[] {
     return [...this.conversationHistory];
+  }
+
+  private buildPromptWithHistory(instruction: string, userId: string): string {
+    const contextPrompt = this.intentParser.buildContextPrompt();
+    const newUserMessage = `${contextPrompt}${instruction}`;
+
+    this.sessionManager.appendConversationMessage(
+      userId,
+      { role: 'user', content: newUserMessage },
+      this.conversationOptions
+    );
+
+    if (!this.conversationOptions.includeHistory) {
+      this.conversationHistory = [{ role: 'user', content: newUserMessage }];
+      return newUserMessage;
+    }
+
+    const history = this.sessionManager.getConversationWithLimits(userId, this.conversationOptions);
+    this.conversationHistory = history;
+
+    return history.map((msg) => msg.content).join('\n');
+  }
+
+  private appendAssistantResponse(response: string, userId: string): void {
+    if (!response) return;
+
+    this.sessionManager.appendConversationMessage(
+      userId,
+      { role: 'assistant', content: response },
+      this.conversationOptions
+    );
+
+    this.conversationHistory = this.sessionManager.getConversationWithLimits(userId, this.conversationOptions);
   }
 }

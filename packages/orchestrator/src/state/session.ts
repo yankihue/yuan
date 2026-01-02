@@ -1,4 +1,10 @@
-import type { SessionState, SubAgent, TaskInfo } from '../types.js';
+import type {
+  ConversationMessage,
+  ConversationOptions,
+  SessionState,
+  SubAgent,
+  TaskInfo,
+} from '../types.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export class SessionManager {
@@ -7,11 +13,39 @@ export class SessionManager {
   constructor() {
     this.state = {
       activeSubAgents: [],
+      conversations: {},
     };
   }
 
   getState(): SessionState {
     return { ...this.state };
+  }
+
+  getConversation(userId: string): ConversationMessage[] {
+    const history = this.state.conversations[userId] ?? [];
+    return [...history];
+  }
+
+  appendConversationMessage(
+    userId: string,
+    message: ConversationMessage,
+    options?: ConversationOptions
+  ): ConversationMessage[] {
+    const history = this.state.conversations[userId] ? [...this.state.conversations[userId]] : [];
+    history.push(message);
+    this.state.conversations[userId] = this.applyConversationLimits(history, options);
+    return this.getConversation(userId);
+  }
+
+  clearConversation(userId: string): void {
+    delete this.state.conversations[userId];
+  }
+
+  getConversationWithLimits(userId: string, options?: ConversationOptions): ConversationMessage[] {
+    const history = this.state.conversations[userId] ? [...this.state.conversations[userId]] : [];
+    const limited = this.applyConversationLimits(history, options);
+    this.state.conversations[userId] = limited;
+    return [...limited];
   }
 
   setRepoContext(org: string | undefined, repo: string | undefined, branch?: string): void {
@@ -110,5 +144,35 @@ export class SessionManager {
 
   getSubAgent(id: string): SubAgent | undefined {
     return this.state.activeSubAgents.find((a) => a.id === id);
+  }
+
+  private applyConversationLimits(
+    history: ConversationMessage[],
+    options?: ConversationOptions
+  ): ConversationMessage[] {
+    const maxTurns = options?.maxTurns;
+    const maxTokens = options?.maxTokens;
+
+    while (maxTurns && history.length > maxTurns) {
+      history.shift();
+    }
+
+    if (maxTokens) {
+      let totalTokens = this.estimateTokens(history);
+      while (history.length > 0 && totalTokens > maxTokens) {
+        history.shift();
+        totalTokens = this.estimateTokens(history);
+      }
+    }
+
+    return history;
+  }
+
+  private estimateTokens(history: ConversationMessage[]): number {
+    return history.reduce((sum, message) => {
+      // Rough estimation: split by whitespace and punctuation
+      const tokenLikePieces = message.content.split(/\s+/).filter(Boolean);
+      return sum + tokenLikePieces.length;
+    }, 0);
   }
 }

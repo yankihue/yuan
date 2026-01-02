@@ -45,6 +45,7 @@ export interface SessionState {
   currentBranch?: string;
   activeSubAgents: SubAgent[];
   currentTask?: TaskInfo;
+  conversations: Record<string, ConversationMessage[]>;
 }
 
 export interface TaskInfo {
@@ -83,6 +84,12 @@ export interface PendingApproval {
 export interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+export interface ConversationOptions {
+  includeHistory?: boolean;
+  maxTurns?: number;
+  maxTokens?: number;
 }
 
 // Approval pattern categories
