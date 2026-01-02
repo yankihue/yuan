@@ -16,10 +16,27 @@
       "Bash(git branch:*)",
       "Bash(git remote:*)",
       "Bash(xargs git log --oneline -1)",
-      "Bash(gh:*)",
+      "Bash(gh repo create:*)",
+      "Bash(gh repo clone:*)",
+      "Bash(gh repo view:*)",
+      "Bash(gh repo list:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr checkout:*)",
+      "Bash(gh issue create:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh auth status:*)",
+      "Bash(gh api:*)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:patch-diff.githubusercontent.com)",
       "Bash(docker logs:*)"
+    ],
+    "deny": [
+      "Bash(gh repo delete:*)",
+      "Bash(gh repo archive:*)"
     ]
   }
 }
