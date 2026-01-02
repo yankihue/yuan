@@ -138,16 +138,7 @@ export class OrchestratorServer {
           return;
         }
 
-        const agentLabel = targetAgent === 'codex' ? 'ChatGPT Codex' : 'Claude Code';
-        this.broadcastUpdate({
-          type: 'STATUS_UPDATE',
-          userId: instruction.userId,
-          message: `🤖 Routing to ${agentLabel} based on your request.`,
-          agent: targetAgent,
-          taskId: this.sessionManager.getCurrentTaskId(),
-        });
-
-        // Process asynchronously
+        // Process asynchronously - the session will send its own status update
         await session.processInstruction(detected.cleanedInstruction, instruction.userId);
       } catch (error) {
         console.error('Error processing instruction:', error);

@@ -31,5 +31,7 @@ EXPOSE 3000
 CMD ["node", "dist/index.js"]
 
 FROM runtime AS telegram-bot
+# Install ffmpeg for voice message transcription
+RUN apk add --no-cache ffmpeg
 WORKDIR /app/packages/telegram-bot
 CMD ["node", "dist/index.js"]
