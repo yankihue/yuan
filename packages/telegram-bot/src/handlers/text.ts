@@ -68,6 +68,11 @@ export class TextHandler {
       return;
     }
 
+    if (lowerText === '/reset' || lowerText === 'reset') {
+      await this.handleResetCommand(ctx, userId);
+      return;
+    }
+
     // Send instruction to orchestrator
     try {
       await ctx.api.sendChatAction(chatId, 'typing');
@@ -154,6 +159,16 @@ export class TextHandler {
     } catch (error) {
       console.error('Failed to cancel tasks:', error);
       await ctx.reply('❌ Failed to cancel current tasks. Please try again.');
+    }
+  }
+
+  private async handleResetCommand(ctx: Context, userId: number): Promise<void> {
+    try {
+      await this.orchestratorClient.resetConversation(userId.toString());
+      await ctx.reply('🧹 Conversation history has been reset for this chat.');
+    } catch (error) {
+      console.error('Failed to reset conversation:', error);
+      await ctx.reply('❌ Could not reset conversation history. Please try again.');
     }
   }
 

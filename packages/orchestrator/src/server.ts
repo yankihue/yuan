@@ -212,6 +212,27 @@ export class OrchestratorServer {
       }
     });
 
+    // Reset conversation history for a user
+    this.app.post('/reset', (req: Request, res: Response) => {
+      try {
+        const { userId } = req.body as { userId?: string };
+
+        if (!userId) {
+          res.status(400).json({ error: 'userId is required' });
+          return;
+        }
+
+        this.sessionManager.clearConversation(userId);
+        this.claudeSession.clearUserHistory(userId);
+        this.codexSession.clearUserHistory(userId);
+
+        res.json({ status: 'reset', userId });
+      } catch (error) {
+        console.error('Error resetting conversation:', error);
+        res.status(500).json({ error: 'Failed to reset conversation' });
+      }
+    });
+
     // Get status of all tasks
     this.app.get('/status', (_req: Request, res: Response) => {
       try {
