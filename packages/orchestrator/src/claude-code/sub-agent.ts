@@ -85,6 +85,7 @@ If you encounter any issues that require user input, stop and describe what you 
         '--verbose',
         '--output-format', 'stream-json',
         '--input-format', 'stream-json',
+        '--dangerously-skip-permissions',
       ];
 
       // Build environment - only include API key if provided (otherwise uses manual login)
