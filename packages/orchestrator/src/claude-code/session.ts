@@ -215,12 +215,11 @@ export class ClaudeCodeSession extends EventEmitter {
         },
       });
 
-      this.currentProcess.stdin.write(`${initialMessage}\n`, (err) => {
-        if (err) {
-          this.sessionManager.failTask();
-          reject(new Error(`Failed to send prompt to Claude Code: ${err.message}`));
-        }
+      this.currentProcess.stdin.on('error', (err) => {
+        this.sessionManager.failTask();
+        reject(new Error(`Failed to send prompt to Claude Code: ${err.message}`));
       });
+      this.currentProcess.stdin.end(`${initialMessage}\n`);
 
       let fullResponse = '';
       let buffer = '';
