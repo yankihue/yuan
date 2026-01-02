@@ -5,6 +5,7 @@ import type {
   ApprovalResponse,
   OrchestratorUpdate,
   StatusResponse,
+  InputResponse,
 } from '../types.js';
 
 interface OrchestratorConfig {
@@ -126,6 +127,22 @@ export class OrchestratorClient extends EventEmitter {
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`Failed to send approval response: ${response.status} ${text}`);
+    }
+  }
+
+  async sendInputResponse(inputResponse: InputResponse): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/input-response`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.config.secret}`,
+      },
+      body: JSON.stringify(inputResponse),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to send input response: ${response.status} ${text}`);
     }
   }
 

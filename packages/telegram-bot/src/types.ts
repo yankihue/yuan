@@ -15,6 +15,8 @@ export interface OrchestratorUpdate {
   agentId?: string;
   message: string;
   agent?: AgentType;
+  inputId?: string;
+  expectedInputFormat?: 'text' | 'json' | string;
   approvalId?: string;
   approvalDetails?: {
     action: string;
@@ -36,6 +38,12 @@ export interface ApprovalResponse {
   approvalId: string;
   approved: boolean;
   userId: string;
+}
+
+export interface InputResponse {
+  inputId: string;
+  userId: string;
+  response: string;
 }
 
 // Status response from orchestrator
