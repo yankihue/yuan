@@ -14,6 +14,12 @@ interface OrchestratorConfig {
   secret: string;
 }
 
+interface CancelResponse {
+  cancelledTask: boolean;
+  cancelledSubAgents: number;
+  message: string;
+}
+
 export class OrchestratorClient extends EventEmitter {
   private config: OrchestratorConfig;
   private ws: WebSocket | null = null;
@@ -160,6 +166,24 @@ export class OrchestratorClient extends EventEmitter {
     }
 
     return response.json() as Promise<StatusResponse>;
+  }
+
+  async cancelTasks(userId: string): Promise<CancelResponse> {
+    const response = await fetch(`${this.baseUrl}/cancel`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.config.secret}`,
+      },
+      body: JSON.stringify({ userId }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to cancel tasks: ${response.status} ${text}`);
+    }
+
+    return response.json() as Promise<CancelResponse>;
   }
 
   disconnect(): void {
