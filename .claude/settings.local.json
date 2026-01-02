@@ -1,6 +1,20 @@
 {
   "permissions": {
     "allow": [
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Bash(mkdir:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(touch:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
       "Bash(git merge-base:*)",
       "Bash(git fetch:*)",
       "Bash(git checkout:*)",
@@ -35,6 +49,7 @@
       "Bash(docker logs:*)"
     ],
     "deny": [
+      "Bash(rm -rf /*)",
       "Bash(gh repo delete:*)",
       "Bash(gh repo archive:*)"
     ]
