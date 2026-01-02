@@ -1,5 +1,5 @@
 import { Bot, InlineKeyboard } from 'grammy';
-import { TranscriptionService } from './services/transcription.js';
+import { createTranscriptionService, type TranscriptionService, type TranscriptionProvider } from './services/transcription.js';
 import { OrchestratorClient } from './services/orchestrator.js';
 import { VoiceHandler } from './handlers/voice.js';
 import { TextHandler } from './handlers/text.js';
@@ -8,7 +8,10 @@ import type { OrchestratorUpdate } from './types.js';
 
 interface BotConfig {
   telegramBotToken: string;
-  openaiApiKey: string;
+  transcriptionProvider: TranscriptionProvider;
+  openaiApiKey?: string;
+  whisperModelPath?: string;
+  whisperBinaryPath?: string;
   orchestratorHost: string;
   orchestratorPort: number;
   orchestratorSecret: string;
@@ -30,7 +33,13 @@ export class TelegramBot {
     this.bot = new Bot(config.telegramBotToken);
 
     // Initialize services
-    this.transcriptionService = new TranscriptionService(config.openaiApiKey);
+    this.transcriptionService = createTranscriptionService({
+      provider: config.transcriptionProvider,
+      openaiApiKey: config.openaiApiKey,
+      whisperModelPath: config.whisperModelPath,
+      whisperBinaryPath: config.whisperBinaryPath,
+    });
+
     this.orchestratorClient = new OrchestratorClient({
       host: config.orchestratorHost,
       port: config.orchestratorPort,
@@ -79,6 +88,7 @@ export class TelegramBot {
   private setupHandlers(): void {
     // Start command
     this.bot.command('start', async (ctx) => {
+      const provider = this.config.transcriptionProvider === 'local' ? 'local Whisper' : 'OpenAI Whisper';
       await ctx.reply(
         '👋 *Welcome to the Voice-to-Code Orchestrator!*\n\n' +
         'I can help you control Claude Code using voice or text commands.\n\n' +
@@ -87,7 +97,8 @@ export class TelegramBot {
         '✍️ Or type your instructions directly\n' +
         '📊 Type "status" to check active tasks\n' +
         '❌ Type "cancel" to stop the current task\n\n' +
-        'Multiple voice messages sent within 10 seconds will be combined into one instruction.',
+        'Multiple voice messages sent within 10 seconds will be combined into one instruction.\n\n' +
+        `_Using ${provider} for transcription_`,
         { parse_mode: 'Markdown' }
       );
     });
@@ -219,6 +230,7 @@ export class TelegramBot {
 
     // Start the bot
     console.log('Starting Telegram bot...');
+    console.log(`Transcription provider: ${this.config.transcriptionProvider}`);
     await this.bot.start({
       onStart: (botInfo) => {
         console.log(`Bot @${botInfo.username} is running!`);

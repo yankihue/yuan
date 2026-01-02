@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { TelegramBot } from './bot.js';
+import type { TranscriptionProvider } from './services/transcription.js';
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -24,9 +25,25 @@ function parseUserIds(value: string | undefined): number[] | undefined {
 async function main(): Promise<void> {
   console.log('Starting Voice-to-Code Telegram Bot...');
 
+  // Determine transcription provider
+  const transcriptionProvider = getOptionalEnv('TRANSCRIPTION_PROVIDER', 'openai') as TranscriptionProvider;
+
+  // Validate provider config
+  if (transcriptionProvider === 'openai' && !process.env.OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is required when using openai transcription provider');
+  }
+
+  if (transcriptionProvider === 'local') {
+    console.log('Using local Whisper transcription');
+    console.log('Make sure whisper.cpp or faster-whisper is installed');
+  }
+
   const bot = new TelegramBot({
     telegramBotToken: getRequiredEnv('TELEGRAM_BOT_TOKEN'),
-    openaiApiKey: getRequiredEnv('OPENAI_API_KEY'),
+    transcriptionProvider,
+    openaiApiKey: process.env.OPENAI_API_KEY,
+    whisperModelPath: process.env.WHISPER_MODEL_PATH,
+    whisperBinaryPath: process.env.WHISPER_BINARY_PATH,
     orchestratorHost: getOptionalEnv('ORCHESTRATOR_HOST', 'localhost'),
     orchestratorPort: parseInt(getOptionalEnv('ORCHESTRATOR_PORT', '3000'), 10),
     orchestratorSecret: getRequiredEnv('ORCHESTRATOR_SECRET'),
