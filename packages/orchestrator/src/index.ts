@@ -16,18 +16,16 @@ function getOptionalEnv(name: string, defaultValue: string): string {
 async function main(): Promise<void> {
   console.log('Starting Claude Code Orchestrator...');
 
-  if (process.env.OPENAI_API_KEY) {
-    console.log('ChatGPT Codex support is enabled.');
-  } else {
-    console.log('ChatGPT Codex support not configured (missing OPENAI_API_KEY).');
-  }
+  const codexCommand = process.env.CODEX_CLI_COMMAND || 'codex';
+  const codexArgs = process.env.CODEX_CLI_ARGS?.split(' ').filter(Boolean) ?? [];
+  console.log(`Codex CLI command: ${codexCommand}${codexArgs.length ? ` ${codexArgs.join(' ')}` : ''}`);
 
   const server = new OrchestratorServer({
     port: parseInt(getOptionalEnv('ORCHESTRATOR_PORT', '3000'), 10),
     secret: getRequiredEnv('ORCHESTRATOR_SECRET'),
     anthropicApiKey: getRequiredEnv('ANTHROPIC_API_KEY'),
-    openaiApiKey: process.env.OPENAI_API_KEY,
-    codexModel: process.env.CODEX_MODEL,
+    codexCommand,
+    codexArgs,
     workingDirectory: process.env.WORKING_DIRECTORY || process.cwd(),
   });
 

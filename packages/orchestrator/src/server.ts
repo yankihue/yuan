@@ -12,8 +12,8 @@ interface ServerConfig {
   port: number;
   secret: string;
   anthropicApiKey: string;
-  openaiApiKey?: string;
-  codexModel?: string;
+  codexCommand?: string;
+  codexArgs?: string[];
   workingDirectory?: string;
 }
 
@@ -24,7 +24,7 @@ export class OrchestratorServer {
   private wss: WebSocketServer;
   private clients: Set<WebSocket> = new Set();
   private claudeSession: ClaudeCodeSession;
-  private codexSession: CodexSession | null = null;
+  private codexSession: CodexSession;
   private subAgentManager: SubAgentManager;
   private approvalGate: ApprovalGate;
   private sessionManager: SessionManager;
@@ -47,16 +47,14 @@ export class OrchestratorServer {
       agentType: 'claude',
     });
 
-    if (config.openaiApiKey) {
-      this.codexSession = new CodexSession({
-        openaiApiKey: config.openaiApiKey,
-        workingDirectory: config.workingDirectory,
-        sessionManager: this.sessionManager,
-        approvalGate: this.approvalGate,
-        model: config.codexModel,
-        agentType: 'codex',
-      });
-    }
+    this.codexSession = new CodexSession({
+      command: config.codexCommand,
+      args: config.codexArgs,
+      workingDirectory: config.workingDirectory,
+      sessionManager: this.sessionManager,
+      approvalGate: this.approvalGate,
+      agentType: 'codex',
+    });
 
     // Initialize sub-agent manager
     this.subAgentManager = new SubAgentManager(config.anthropicApiKey);
@@ -112,28 +110,8 @@ export class OrchestratorServer {
         res.json({ status: 'accepted', timestamp: new Date().toISOString() });
 
         const detected = this.detectAgent(instruction.instruction);
-        let targetAgent: AgentType = detected.agent;
-        let session = detected.agent === 'codex' ? this.codexSession : this.claudeSession;
-
-        if (!session && detected.agent === 'codex') {
-          targetAgent = 'claude';
-          session = this.claudeSession;
-          this.broadcastUpdate({
-            type: 'STATUS_UPDATE',
-            userId: instruction.userId,
-            message: '⚠️ ChatGPT Codex requested but not configured. Using Claude instead.',
-            agent: 'claude',
-          });
-        }
-
-        if (!session) {
-          this.broadcastUpdate({
-            type: 'ERROR',
-            userId: instruction.userId,
-            message: 'No available agent to process this instruction.',
-          });
-          return;
-        }
+        const targetAgent: AgentType = detected.agent;
+        const session = targetAgent === 'codex' ? this.codexSession : this.claudeSession;
 
         if (this.isAnySessionProcessing()) {
           this.broadcastUpdate({
@@ -246,11 +224,9 @@ export class OrchestratorServer {
       this.broadcastUpdate(update);
     });
 
-    if (this.codexSession) {
-      this.codexSession.on('update', (update: OrchestratorUpdate) => {
-        this.broadcastUpdate(update);
-      });
-    }
+    this.codexSession.on('update', (update: OrchestratorUpdate) => {
+      this.broadcastUpdate(update);
+    });
 
     this.approvalGate.on('update', (update: OrchestratorUpdate) => {
       this.broadcastUpdate(update);
@@ -303,7 +279,7 @@ export class OrchestratorServer {
   private isAnySessionProcessing(): boolean {
     return (
       this.claudeSession.isCurrentlyProcessing() ||
-      (this.codexSession?.isCurrentlyProcessing() ?? false)
+      this.codexSession.isCurrentlyProcessing()
     );
   }
 
