@@ -102,11 +102,15 @@ export class ClaudeCodeSession extends EventEmitter {
   }
 
   async processInstruction(instruction: string, userId: string): Promise<void> {
+    // Note: Queue management is now handled by TaskQueue in server.ts
+    // This method is only called when it's this task's turn to process
     if (this.isProcessing) {
+      // This shouldn't happen with proper queue management, but log it
+      console.warn('processInstruction called while already processing - this may indicate a queue issue');
       this.emit('update', {
         type: 'ERROR',
         userId,
-        message: 'A task is already in progress. Please wait for it to complete.',
+        message: 'Internal error: Claude is already processing. Your task has been queued.',
         agent: this.agentType,
         taskId: this.sessionManager.getCurrentTaskId(),
       } as OrchestratorUpdate);

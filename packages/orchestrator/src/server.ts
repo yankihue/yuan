@@ -8,12 +8,21 @@ import type {
   StatusResponse,
   AgentType,
   InputResponse,
+  RepoQueueInfo,
 } from './types.js';
 import { ClaudeCodeSession } from './claude-code/session.js';
 import { SubAgentManager } from './claude-code/sub-agent.js';
 import { CodexSession } from './codex/session.js';
 import { ApprovalGate } from './approval/gate.js';
 import { SessionManager } from './state/session.js';
+import {
+  ParallelTaskQueue,
+  SessionPool,
+  detectRepo,
+  formatRepoKeyForDisplay,
+  type ParallelQueuedTask,
+} from './queue/index.js';
+import { PermissionGuard } from './permissions/index.js';
 
 interface ServerConfig {
   port: number;
@@ -24,6 +33,7 @@ interface ServerConfig {
   workingDirectory?: string;
   claudeTokenLimit?: number;
   claudeTokenWarningRatio?: number;
+  maxConcurrentRepos?: number; // Max repos to process in parallel
 }
 
 export class OrchestratorServer {
@@ -32,12 +42,14 @@ export class OrchestratorServer {
   private httpServer: ReturnType<typeof createServer>;
   private wss: WebSocketServer;
   private clients: Set<WebSocket> = new Set();
-  private claudeSession: ClaudeCodeSession;
+  private sessionPool: SessionPool;
   private codexSession: CodexSession;
   private subAgentManager: SubAgentManager;
   private approvalGate: ApprovalGate;
   private sessionManager: SessionManager;
-  private pendingInputs: Map<string, { userId: string; agent: AgentType }>;
+  private pendingInputs: Map<string, { userId: string; agent: AgentType; repoKey: string }>;
+  private taskQueue: ParallelTaskQueue;
+  private permissionGuard: PermissionGuard;
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -48,17 +60,26 @@ export class OrchestratorServer {
     this.approvalGate = new ApprovalGate();
     this.sessionManager = new SessionManager();
     this.pendingInputs = new Map();
+    this.permissionGuard = new PermissionGuard();
 
-    // Initialize Claude Code session
-    this.claudeSession = new ClaudeCodeSession({
-      anthropicApiKey: config.anthropicApiKey,
-      workingDirectory: config.workingDirectory,
-      sessionManager: this.sessionManager,
-      approvalGate: this.approvalGate,
-      agentType: 'claude',
-      tokenLimit: config.claudeTokenLimit,
-      tokenWarningRatio: config.claudeTokenWarningRatio,
+    // Initialize parallel task queue
+    this.taskQueue = new ParallelTaskQueue({
+      maxQueueSize: 50,
+      maxTasksPerUser: 10,
+      maxConcurrentRepos: config.maxConcurrentRepos ?? 5,
     });
+
+    // Initialize session pool for parallel repo processing
+    this.sessionPool = new SessionPool(
+      {
+        maxConcurrentSessions: config.maxConcurrentRepos ?? 5,
+        anthropicApiKey: config.anthropicApiKey,
+        workingDirectory: config.workingDirectory,
+        tokenLimit: config.claudeTokenLimit,
+        tokenWarningRatio: config.claudeTokenWarningRatio,
+      },
+      this.approvalGate
+    );
 
     this.codexSession = new CodexSession({
       command: config.codexCommand,
@@ -76,6 +97,68 @@ export class OrchestratorServer {
     this.setupRoutes();
     this.setupWebSocket();
     this.setupEventForwarding();
+    this.setupTaskQueue();
+  }
+
+  private setupTaskQueue(): void {
+    // Forward queue updates to WebSocket clients
+    this.taskQueue.on('update', (update: OrchestratorUpdate) => {
+      this.broadcastUpdate(update);
+    });
+
+    // Forward session pool updates to WebSocket clients
+    this.sessionPool.on('update', (update: OrchestratorUpdate) => {
+      this.broadcastUpdate(update);
+    });
+
+    // Set up the processor callback for the parallel queue
+    this.taskQueue.setProcessor(async (task: ParallelQueuedTask) => {
+      // Only process Claude tasks (ignoring Codex as per user request)
+      if (task.agent !== 'claude') {
+        this.broadcastUpdate({
+          type: 'ERROR',
+          userId: task.userId,
+          message: 'Only Claude is supported. Codex tasks are currently disabled.',
+          agent: task.agent,
+          taskId: task.id,
+        });
+        return;
+      }
+
+      // Check for blocked operations before processing
+      const permCheck = this.permissionGuard.check(task.instruction);
+      if (!permCheck.allowed && permCheck.blocked) {
+        this.broadcastUpdate({
+          type: 'ERROR',
+          userId: task.userId,
+          message: `🚫 BLOCKED: ${permCheck.blocked.reason}. This operation is not allowed.`,
+          agent: task.agent,
+          taskId: task.id,
+        });
+        return;
+      }
+
+      // Get or create session for this repo
+      const pooledSession = this.sessionPool.getOrCreateSession(task.repoKey);
+      this.sessionPool.setRepoProcessing(task.repoKey, true);
+
+      try {
+        // Notify which repo is being worked on
+        const repoDisplay = formatRepoKeyForDisplay(task.repoKey);
+        this.broadcastUpdate({
+          type: 'STATUS_UPDATE',
+          userId: task.userId,
+          message: `🔄 Processing task for ${repoDisplay}...`,
+          agent: task.agent,
+          taskId: task.id,
+        });
+
+        // Process with the repo-specific Claude session
+        await pooledSession.session.processInstruction(task.instruction, task.userId);
+      } finally {
+        this.sessionPool.setRepoProcessing(task.repoKey, false);
+      }
+    });
   }
 
   private setupMiddleware(): void {
@@ -120,26 +203,64 @@ export class OrchestratorServer {
 
         console.log(`Received instruction from user ${instruction.userId}: ${instruction.instruction.substring(0, 50)}...`);
 
-        // Acknowledge receipt immediately
-        res.json({ status: 'accepted', timestamp: new Date().toISOString() });
-
         const detected = this.detectAgent(instruction.instruction);
-        const targetAgent: AgentType = detected.agent;
-        const session = targetAgent === 'codex' ? this.codexSession : this.claudeSession;
 
-        if (this.isAnySessionProcessing()) {
+        // Force Claude for all tasks (ignoring Codex as per user request)
+        const effectiveAgent: AgentType = 'claude';
+
+        // Detect which repo this instruction is for
+        const repoDetection = detectRepo(detected.cleanedInstruction);
+        const repoKey = repoDetection.repoKey;
+
+        console.log(`Detected repo: ${repoKey} (confidence: ${repoDetection.confidence}, isNew: ${repoDetection.isNewRepo})`);
+
+        // Pre-check for blocked destructive operations
+        const permCheck = this.permissionGuard.check(detected.cleanedInstruction);
+        if (!permCheck.allowed && permCheck.blocked) {
+          res.json({
+            status: 'rejected',
+            reason: 'blocked_operation',
+            message: permCheck.blocked.reason,
+            timestamp: new Date().toISOString(),
+          });
+
           this.broadcastUpdate({
             type: 'ERROR',
             userId: instruction.userId,
-            message: 'A task is already in progress. Please wait for it to complete.',
-            agent: targetAgent,
-            taskId: this.sessionManager.getCurrentTaskId(),
+            message: `🚫 BLOCKED: ${permCheck.blocked.reason}. This operation is not allowed.`,
+            agent: effectiveAgent,
           });
           return;
         }
 
-        // Process asynchronously - the session will send its own status update
-        await session.processInstruction(detected.cleanedInstruction, instruction.userId);
+        // Enqueue the task with repo context - parallel queue handles concurrent processing
+        const queuedTask = this.taskQueue.enqueue(
+          instruction.userId,
+          detected.cleanedInstruction,
+          effectiveAgent,
+          repoKey
+        );
+
+        if (!queuedTask) {
+          res.json({
+            status: 'rejected',
+            reason: 'queue_full',
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+
+        // Acknowledge receipt with queue info
+        const queueStatus = this.taskQueue.getQueueStatus();
+        res.json({
+          status: 'accepted',
+          taskId: queuedTask.id,
+          repoKey: repoKey,
+          queuePosition: queuedTask.position,
+          totalQueued: queueStatus.totalQueued,
+          activeRepos: queueStatus.activeRepos,
+          timestamp: new Date().toISOString(),
+        });
       } catch (error) {
         console.error('Error processing instruction:', error);
         res.status(500).json({ error: 'Failed to process instruction' });
@@ -162,7 +283,14 @@ export class OrchestratorServer {
           return;
         }
 
-        const success = await this.claudeSession.submitInputResponse(
+        // Get the session for this repo
+        const pooledSession = this.sessionPool.getSession(pending.repoKey);
+        if (!pooledSession) {
+          res.status(404).json({ error: 'Session not found for this input' });
+          return;
+        }
+
+        const success = await pooledSession.session.submitInputResponse(
           inputResponse.userId,
           inputResponse.inputId,
           inputResponse.response
@@ -216,7 +344,7 @@ export class OrchestratorServer {
         }
 
         this.sessionManager.clearConversation(userId);
-        this.claudeSession.clearUserHistory(userId);
+        this.sessionPool.clearUserHistory(userId);
         this.codexSession.clearUserHistory(userId);
 
         res.json({ status: 'reset', userId });
@@ -236,26 +364,30 @@ export class OrchestratorServer {
           return;
         }
 
-        const currentTask = this.sessionManager.getCurrentTask();
-        if (!currentTask || currentTask.id !== taskId || currentTask.userId !== userId) {
+        // Try to cancel from the parallel queue
+        const result = this.taskQueue.cancelTask(taskId, userId);
+
+        if (!result.cancelled) {
           res.status(404).json({ error: 'Task not found or already finished' });
           return;
         }
 
-        const targetSession = currentTask.agent === 'codex' ? this.codexSession : this.claudeSession;
-        targetSession.cancelCurrentTask();
-        this.sessionManager.failTask();
+        // If it was processing, cancel the session too
+        if (result.wasProcessing && result.repoKey) {
+          this.sessionPool.cancelRepoTask(result.repoKey);
+        }
+
         this.approvalGate.cancelAllForUser(userId);
 
         this.broadcastUpdate({
           type: 'STATUS_UPDATE',
           userId,
           message: `🛑 Task ${taskId} cancelled by user.`,
-          agent: currentTask.agent,
+          agent: 'claude',
           taskId,
         });
 
-        res.json({ status: 'cancelled' });
+        res.json({ status: 'cancelled', repoKey: result.repoKey });
       } catch (error) {
         console.error('Error cancelling task:', error);
         res.status(500).json({ error: 'Failed to cancel task' });
@@ -265,20 +397,31 @@ export class OrchestratorServer {
     // Get status of all tasks
     this.app.get('/status', (_req: Request, res: Response) => {
       try {
-        const currentTask = this.sessionManager.getCurrentTask();
         const subAgents = this.subAgentManager.getActiveAgents();
+        const queueStatus = this.taskQueue.getQueueStatus();
+        const sessionStats = this.sessionPool.getStats();
+
+        // Build repo queue info
+        const repoQueues: RepoQueueInfo[] = [];
+        for (const [repoKey, info] of queueStatus.queuesByRepo.entries()) {
+          const processingTask = this.taskQueue.getProcessingTask(repoKey);
+          repoQueues.push({
+            repoKey,
+            queued: info.queued,
+            processing: info.processing,
+            currentTaskId: processingTask?.id,
+          });
+        }
 
         const status: StatusResponse = {
           subAgents,
-          currentTask: currentTask
-            ? {
-                id: currentTask.id,
-                description: currentTask.description,
-                status: currentTask.status,
-                startedAt: currentTask.startedAt,
-                agent: currentTask.agent,
-              }
-            : undefined,
+          parallelQueue: {
+            totalQueued: queueStatus.totalQueued,
+            activeRepos: queueStatus.activeRepos,
+            maxConcurrentRepos: queueStatus.maxConcurrentRepos,
+            processingRepos: queueStatus.processingRepos,
+            repoQueues,
+          },
         };
 
         res.json(status);
@@ -297,27 +440,20 @@ export class OrchestratorServer {
           return;
         }
 
-        const currentTask = this.sessionManager.getCurrentTask();
-        let cancelledTask = false;
-        let agent: AgentType | undefined;
+        // Cancel all tasks for this user from the parallel queue
+        const { cancelled: cancelledFromQueue, processingRepos } = this.taskQueue.cancelAllForUser(userId);
 
-        if (currentTask && currentTask.userId === userId && currentTask.status === 'running') {
-          agent = currentTask.agent;
-
-          if (currentTask.agent === 'claude') {
-            this.claudeSession.cancelCurrentTask();
-          } else {
-            this.codexSession.cancelCurrentTask();
-          }
-          cancelledTask = true;
+        // Cancel sessions for repos that were processing
+        for (const repoKey of processingRepos) {
+          this.sessionPool.cancelRepoTask(repoKey);
         }
 
         const cancelledSubAgents = this.subAgentManager.cancelAllForUser(userId);
         this.approvalGate.cancelAllForUser(userId);
 
-        const totalStopped = (cancelledTask ? 1 : 0) + cancelledSubAgents;
+        const totalStopped = cancelledFromQueue + cancelledSubAgents;
         const message = totalStopped > 0
-          ? `⏹️ Cancelled tasks. Stopped ${totalStopped} task(s) (${cancelledSubAgents} sub-agent(s)).`
+          ? `⏹️ Cancelled ${totalStopped} task(s): ${processingRepos.length} running, ${cancelledFromQueue - processingRepos.length} queued, ${cancelledSubAgents} sub-agent(s).`
           : 'ℹ️ No active tasks to cancel.';
 
         if (totalStopped > 0) {
@@ -325,13 +461,16 @@ export class OrchestratorServer {
             type: 'STATUS_UPDATE',
             userId,
             message,
-            agent,
+            agent: 'claude',
           });
         }
 
         res.json({
-          cancelledTask,
+          cancelledTasks: cancelledFromQueue,
+          cancelledRunning: processingRepos.length,
+          cancelledQueued: cancelledFromQueue - processingRepos.length,
           cancelledSubAgents,
+          processingRepos,
           message,
         });
       } catch (error) {
@@ -371,10 +510,7 @@ export class OrchestratorServer {
   }
 
   private setupEventForwarding(): void {
-    // Forward updates from Claude session to WebSocket clients
-    this.claudeSession.on('update', (update: OrchestratorUpdate) => {
-      this.broadcastUpdate(update);
-    });
+    // Note: SessionPool updates are forwarded in setupTaskQueue()
 
     this.codexSession.on('update', (update: OrchestratorUpdate) => {
       this.broadcastUpdate(update);
@@ -431,16 +567,28 @@ export class OrchestratorServer {
 
   private isAnySessionProcessing(): boolean {
     return (
-      this.claudeSession.isCurrentlyProcessing() ||
+      this.taskQueue.isAnyProcessing() ||
       this.codexSession.isCurrentlyProcessing()
     );
   }
 
-  private updatePendingInputState(update: OrchestratorUpdate): void {
+  private updatePendingInputState(update: OrchestratorUpdate & { repoKey?: string }): void {
     if (update.type === 'INPUT_NEEDED' && update.inputId) {
+      // Try to find the repoKey from the task
+      let repoKey = update.repoKey ?? '__default__';
+
+      // If no repoKey in update, try to find it from processing repos
+      if (!update.repoKey) {
+        const queueStatus = this.taskQueue.getQueueStatus();
+        if (queueStatus.processingRepos.length === 1) {
+          repoKey = queueStatus.processingRepos[0];
+        }
+      }
+
       this.pendingInputs.set(update.inputId, {
         userId: update.userId,
         agent: update.agent ?? 'claude',
+        repoKey,
       });
       return;
     }

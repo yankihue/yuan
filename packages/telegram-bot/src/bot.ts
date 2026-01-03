@@ -4,7 +4,7 @@ import { OrchestratorClient } from './services/orchestrator.js';
 import { VoiceHandler } from './handlers/voice.js';
 import { TextHandler } from './handlers/text.js';
 import { CallbackHandler } from './handlers/callback.js';
-import type { AgentType, OrchestratorUpdate, StatusResponse } from './types.js';
+import type { AgentType, OrchestratorUpdate, StatusResponse, RepoQueueInfo } from './types.js';
 
 interface BotConfig {
   telegramBotToken: string;
@@ -16,6 +16,13 @@ interface BotConfig {
   orchestratorPort: number;
   orchestratorSecret: string;
   allowedUserIds?: number[];
+}
+
+// Live dashboard that shows all active repos
+interface DashboardState {
+  messageId: number;
+  chatId: number;
+  lastUpdate: Date;
 }
 
 export class TelegramBot {
@@ -32,6 +39,9 @@ export class TelegramBot {
   private lastStatusSummary: string | null = null;
   private lastStatusMessages: Map<string, { messageId: number; chatId: number }> = new Map();
   private taskThreadMap: Map<string, { chatId: number; rootMessageId: number }> = new Map();
+  // Live dashboard per user - shows all active repos in real-time
+  private userDashboards: Map<string, DashboardState> = new Map();
+  private dashboardUpdateInterval: NodeJS.Timeout | null = null;
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -114,8 +124,12 @@ export class TelegramBot {
         '*Commands:*\n' +
         '• /start - Welcome message\n' +
         '• /help - Show this help\n' +
-        '• status - Show active tasks\n' +
+        '• /status - Show all active repos and tasks\n' +
+        '• /dashboard - Start live dashboard (auto-updates)\n' +
         '• cancel - Cancel current task\n\n' +
+        '*Parallel Processing:*\n' +
+        'Tasks for different repos run in parallel. ' +
+        'Tasks for the same repo queue behind each other.\n\n' +
         '*Approval Actions:*\n' +
         'When sensitive operations (push, merge, publish) are detected, ' +
         'you\'ll receive approval requests with buttons.\n\n' +
@@ -124,6 +138,52 @@ export class TelegramBot {
         'and they\'ll be combined into a single instruction.',
         { parse_mode: 'Markdown' }
       );
+    });
+
+    // Status command - show all active repos and tasks
+    this.bot.command('status', async (ctx) => {
+      try {
+        const status = await this.orchestratorClient.getStatus();
+        const statusText = this.formatFullStatus(status);
+        await ctx.reply(statusText, { parse_mode: 'Markdown' });
+      } catch (error) {
+        console.error('Failed to get status:', error);
+        await ctx.reply('❌ Failed to fetch status from orchestrator.');
+      }
+    });
+
+    // Dashboard command - start a live-updating status message
+    this.bot.command('dashboard', async (ctx) => {
+      const userId = ctx.from?.id?.toString();
+      const chatId = ctx.chat?.id;
+      if (!userId || !chatId) return;
+
+      try {
+        const status = await this.orchestratorClient.getStatus();
+        const statusText = this.formatFullStatus(status, true);
+
+        const keyboard = new InlineKeyboard()
+          .text('🔄 Refresh', 'dashboard:refresh')
+          .text('✖️ Close', 'dashboard:close');
+
+        const sent = await ctx.reply(statusText, {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard,
+        });
+
+        // Store dashboard state
+        this.userDashboards.set(userId, {
+          messageId: sent.message_id,
+          chatId,
+          lastUpdate: new Date(),
+        });
+
+        // Start auto-refresh if not already running
+        this.startDashboardUpdates();
+      } catch (error) {
+        console.error('Failed to create dashboard:', error);
+        await ctx.reply('❌ Failed to create dashboard.');
+      }
     });
 
     // Voice message handler
@@ -138,6 +198,23 @@ export class TelegramBot {
 
     // Callback query handler (for inline buttons)
     this.bot.on('callback_query:data', async (ctx) => {
+      const data = ctx.callbackQuery?.data;
+      const userId = ctx.from?.id?.toString();
+
+      // Handle dashboard callbacks
+      if (data?.startsWith('dashboard:') && userId) {
+        const action = data.split(':')[1];
+        if (action === 'refresh') {
+          await ctx.answerCallbackQuery({ text: 'Refreshing...' });
+          await this.refreshDashboard(userId);
+        } else if (action === 'close') {
+          await ctx.answerCallbackQuery({ text: 'Dashboard closed' });
+          await this.closeDashboard(userId);
+        }
+        return;
+      }
+
+      // Delegate other callbacks to the handler
       await this.callbackHandler.handleCallback(ctx);
     });
 
@@ -233,10 +310,179 @@ export class TelegramBot {
     return 'Agent';
   }
 
+  private formatRepoKey(repoKey?: string): string {
+    if (!repoKey || repoKey === '__default__') return 'default';
+    return repoKey;
+  }
+
   private formatStatusText(update: OrchestratorUpdate, prefix: string): string {
     const agentLabel = this.formatAgent(update.agent);
     const title = update.taskTitle ? ` • ${update.taskTitle}` : '';
-    return `${prefix} [${agentLabel}${title}] ${update.message}`;
+    const repo = update.repoKey ? ` 📂 ${this.formatRepoKey(update.repoKey)}` : '';
+    return `${prefix} [${agentLabel}${title}]${repo}\n${update.message}`;
+  }
+
+  private formatFullStatus(status: StatusResponse, isDashboard = false): string {
+    const lines: string[] = [];
+    const now = new Date();
+
+    if (isDashboard) {
+      lines.push('📊 *Live Dashboard*');
+      lines.push(`_Last updated: ${now.toLocaleTimeString()}_\n`);
+    } else {
+      lines.push('📊 *Orchestrator Status*\n');
+    }
+
+    // Parallel queue info
+    if (status.parallelQueue) {
+      const pq = status.parallelQueue;
+
+      if (pq.processingRepos.length === 0 && pq.totalQueued === 0) {
+        lines.push('💤 *No active tasks*');
+        lines.push('_Send a message to start a task_');
+      } else {
+        lines.push(`🔄 *Active Repos:* ${pq.activeRepos}/${pq.maxConcurrentRepos}`);
+        lines.push(`📋 *Queued Tasks:* ${pq.totalQueued}\n`);
+
+        // Show each repo's status
+        if (pq.repoQueues && pq.repoQueues.length > 0) {
+          for (const repo of pq.repoQueues) {
+            const repoName = this.formatRepoKey(repo.repoKey);
+            const statusIcon = repo.processing ? '🟢' : '🟡';
+            const statusText = repo.processing ? 'Processing' : 'Queued';
+            lines.push(`${statusIcon} *${repoName}*: ${statusText}`);
+            if (repo.queued > 0) {
+              lines.push(`   └ ${repo.queued} task(s) waiting`);
+            }
+          }
+        } else if (pq.processingRepos.length > 0) {
+          lines.push('*Processing:*');
+          for (const repo of pq.processingRepos) {
+            lines.push(`🟢 ${this.formatRepoKey(repo)}`);
+          }
+        }
+      }
+    } else if (status.currentTask) {
+      // Legacy single-task view
+      const { description, status: taskStatus, agent } = status.currentTask;
+      lines.push(`🔄 *Current Task* (${agent ?? 'unknown'}):`);
+      lines.push(`   ${description}`);
+      lines.push(`   Status: ${taskStatus}`);
+    } else {
+      lines.push('💤 *No active tasks*');
+    }
+
+    // Sub-agents
+    if (status.subAgents?.length) {
+      lines.push('\n*Sub-agents:*');
+      for (const subAgent of status.subAgents) {
+        const icon = subAgent.status === 'running' ? '🟢' :
+                    subAgent.status === 'completed' ? '✅' :
+                    subAgent.status === 'failed' ? '❌' : '🟡';
+        lines.push(`${icon} ${subAgent.task} (${subAgent.repo})`);
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  private startDashboardUpdates(): void {
+    if (this.dashboardUpdateInterval) return;
+
+    // Update dashboards every 5 seconds
+    this.dashboardUpdateInterval = setInterval(async () => {
+      if (this.userDashboards.size === 0) {
+        this.stopDashboardUpdates();
+        return;
+      }
+
+      try {
+        const status = await this.orchestratorClient.getStatus();
+        await this.updateAllDashboards(status);
+      } catch (error) {
+        console.error('Failed to update dashboards:', error);
+      }
+    }, 5000);
+  }
+
+  private stopDashboardUpdates(): void {
+    if (this.dashboardUpdateInterval) {
+      clearInterval(this.dashboardUpdateInterval);
+      this.dashboardUpdateInterval = null;
+    }
+  }
+
+  private async updateAllDashboards(status: StatusResponse): Promise<void> {
+    const statusText = this.formatFullStatus(status, true);
+    const keyboard = new InlineKeyboard()
+      .text('🔄 Refresh', 'dashboard:refresh')
+      .text('✖️ Close', 'dashboard:close');
+
+    for (const [userId, dashboard] of this.userDashboards.entries()) {
+      try {
+        await this.bot.api.editMessageText(
+          dashboard.chatId,
+          dashboard.messageId,
+          statusText,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: keyboard,
+          }
+        );
+        dashboard.lastUpdate = new Date();
+      } catch (error) {
+        // Message might have been deleted - remove from tracking
+        console.warn(`Failed to update dashboard for user ${userId}:`, error);
+        this.userDashboards.delete(userId);
+      }
+    }
+  }
+
+  async closeDashboard(userId: string): Promise<void> {
+    const dashboard = this.userDashboards.get(userId);
+    if (dashboard) {
+      try {
+        await this.bot.api.editMessageText(
+          dashboard.chatId,
+          dashboard.messageId,
+          '📊 *Dashboard closed*\n_Use /dashboard to open again_',
+          { parse_mode: 'Markdown' }
+        );
+      } catch (error) {
+        console.warn('Failed to close dashboard:', error);
+      }
+      this.userDashboards.delete(userId);
+    }
+
+    if (this.userDashboards.size === 0) {
+      this.stopDashboardUpdates();
+    }
+  }
+
+  async refreshDashboard(userId: string): Promise<void> {
+    const dashboard = this.userDashboards.get(userId);
+    if (!dashboard) return;
+
+    try {
+      const status = await this.orchestratorClient.getStatus();
+      const statusText = this.formatFullStatus(status, true);
+      const keyboard = new InlineKeyboard()
+        .text('🔄 Refresh', 'dashboard:refresh')
+        .text('✖️ Close', 'dashboard:close');
+
+      await this.bot.api.editMessageText(
+        dashboard.chatId,
+        dashboard.messageId,
+        statusText,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard,
+        }
+      );
+      dashboard.lastUpdate = new Date();
+    } catch (error) {
+      console.error('Failed to refresh dashboard:', error);
+    }
   }
 
   private buildQuickReplyKeyboard(taskId?: string): InlineKeyboard {
@@ -374,13 +620,32 @@ export class TelegramBot {
   }
 
   private formatStatusSummary(status: StatusResponse): string {
-    if (!status.subAgents?.length && !status.currentTask) {
+    const hasParallelTasks = status.parallelQueue &&
+      (status.parallelQueue.processingRepos.length > 0 || status.parallelQueue.totalQueued > 0);
+
+    if (!status.subAgents?.length && !status.currentTask && !hasParallelTasks) {
       return '📡 Orchestrator status: idle while WebSocket is offline.';
     }
 
     const lines: string[] = ['📡 Orchestrator status while WebSocket is offline:'];
 
-    if (status.currentTask) {
+    // Parallel queue info
+    if (status.parallelQueue && hasParallelTasks) {
+      const pq = status.parallelQueue;
+      lines.push(`• Active repos: ${pq.activeRepos}/${pq.maxConcurrentRepos}`);
+
+      if (pq.repoQueues && pq.repoQueues.length > 0) {
+        for (const repo of pq.repoQueues) {
+          const repoName = this.formatRepoKey(repo.repoKey);
+          const status = repo.processing ? '🟢 processing' : '🟡 queued';
+          lines.push(`   - ${repoName}: ${status}${repo.queued > 0 ? ` (+${repo.queued} waiting)` : ''}`);
+        }
+      } else if (pq.processingRepos.length > 0) {
+        for (const repo of pq.processingRepos) {
+          lines.push(`   - ${this.formatRepoKey(repo)}: 🟢 processing`);
+        }
+      }
+    } else if (status.currentTask) {
       const { description, status: taskStatus, agent } = status.currentTask;
       lines.push(`• Current task (${agent ?? 'unknown'}): ${description} [${taskStatus}]`);
     }

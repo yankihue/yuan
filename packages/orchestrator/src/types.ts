@@ -112,6 +112,23 @@ export interface ApprovalPatterns {
   deploy: RegExp[];
 }
 
+// Queue status info
+export interface QueuedTaskInfo {
+  id: string;
+  userId: string;
+  position: number;
+  queuedAt: Date;
+  repoKey?: string;
+}
+
+// Repo queue info for parallel processing
+export interface RepoQueueInfo {
+  repoKey: string;
+  queued: number;
+  processing: boolean;
+  currentTaskId?: string;
+}
+
 // Status response
 export interface StatusResponse {
   subAgents: SubAgent[];
@@ -121,5 +138,17 @@ export interface StatusResponse {
     status: string;
     startedAt: Date;
     agent?: AgentType;
+  };
+  queue?: {
+    totalQueued: number;
+    isProcessing: boolean;
+    queuedTasks: QueuedTaskInfo[];
+  };
+  parallelQueue?: {
+    totalQueued: number;
+    activeRepos: number;
+    maxConcurrentRepos: number;
+    processingRepos: string[];
+    repoQueues: RepoQueueInfo[];
   };
 }

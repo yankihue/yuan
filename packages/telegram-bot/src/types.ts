@@ -19,6 +19,7 @@ export interface OrchestratorUpdate {
   expectedInputFormat?: 'text' | 'json' | string;
   taskId?: string;
   taskTitle?: string;
+  repoKey?: string; // Which repo this update is for
   approvalId?: string;
   approvalDetails?: {
     action: string;
@@ -48,6 +49,14 @@ export interface InputResponse {
   response: string;
 }
 
+// Repo queue info for parallel processing
+export interface RepoQueueInfo {
+  repoKey: string;
+  queued: number;
+  processing: boolean;
+  currentTaskId?: string;
+}
+
 // Status response from orchestrator
 export interface StatusResponse {
   subAgents: SubAgentStatus[];
@@ -57,6 +66,13 @@ export interface StatusResponse {
     status: string;
     startedAt: Date;
     agent?: AgentType;
+  };
+  parallelQueue?: {
+    totalQueued: number;
+    activeRepos: number;
+    maxConcurrentRepos: number;
+    processingRepos: string[];
+    repoQueues: RepoQueueInfo[];
   };
 }
 
