@@ -39,6 +39,7 @@ async function main(): Promise<void> {
     workingDirectory: process.env.WORKING_DIRECTORY || process.cwd(),
     claudeTokenLimit: getOptionalNumberEnv('CLAUDE_TOKEN_LIMIT', 200000),
     claudeTokenWarningRatio: getOptionalNumberEnv('CLAUDE_TOKEN_WARNING_RATIO', 0.9),
+    githubOrg: process.env.GITHUB_ORG, // Default GitHub org for repos without explicit org
   });
 
   // Graceful shutdown

@@ -1,4 +1,7 @@
 import { EventEmitter } from 'events';
+import { execSync } from 'child_process';
+import { existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import { ClaudeCodeSession } from '../claude-code/session.js';
 import { SessionManager } from '../state/session.js';
 import { ApprovalGate } from '../approval/gate.js';
@@ -10,11 +13,13 @@ export interface SessionPoolConfig {
   workingDirectory?: string;
   tokenLimit?: number;
   tokenWarningRatio?: number;
+  githubOrg?: string; // Default org for repos without explicit org
 }
 
 interface PooledSession {
   session: ClaudeCodeSession;
   repoKey: string;
+  repoDir: string; // Actual working directory for this repo
   isProcessing: boolean;
   lastUsed: Date;
   sessionManager: SessionManager;
@@ -35,8 +40,64 @@ export class SessionPool extends EventEmitter {
       workingDirectory: config.workingDirectory ?? process.cwd(),
       tokenLimit: config.tokenLimit ?? 200000,
       tokenWarningRatio: config.tokenWarningRatio ?? 0.9,
+      githubOrg: config.githubOrg ?? '',
     };
     this.approvalGate = approvalGate;
+  }
+
+  /**
+   * Setup repo directory - clone if exists on GitHub, otherwise create empty dir
+   */
+  private setupRepoDirectory(repoKey: string): string {
+    const baseDir = this.config.workingDirectory;
+
+    // For default repo key, use base directory
+    if (repoKey === DEFAULT_REPO_KEY) {
+      return baseDir;
+    }
+
+    // Create repo-specific subdirectory
+    const repoDir = join(baseDir, repoKey.replace('/', '_'));
+
+    if (!existsSync(repoDir)) {
+      mkdirSync(repoDir, { recursive: true });
+
+      // Try to clone if it exists on GitHub
+      const fullRepoName = repoKey.includes('/')
+        ? repoKey
+        : this.config.githubOrg
+          ? `${this.config.githubOrg}/${repoKey}`
+          : repoKey;
+
+      try {
+        // Check if repo exists on GitHub
+        execSync(`gh repo view ${fullRepoName} --json name`, {
+          cwd: baseDir,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 10000,
+        });
+
+        // Repo exists, clone it
+        console.log(`Cloning existing repo: ${fullRepoName}`);
+        execSync(`gh repo clone ${fullRepoName} ${repoDir}`, {
+          cwd: baseDir,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 60000,
+        });
+        console.log(`Cloned ${fullRepoName} to ${repoDir}`);
+      } catch (error) {
+        // Repo doesn't exist or clone failed - Claude will need to create it
+        console.log(`Repo ${fullRepoName} not found on GitHub, starting fresh in ${repoDir}`);
+        // Initialize empty git repo so Claude can work with it
+        try {
+          execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+        } catch {
+          // Ignore init errors
+        }
+      }
+    }
+
+    return repoDir;
   }
 
   /**
@@ -63,11 +124,15 @@ export class SessionPool extends EventEmitter {
       }
     }
 
+    // Setup repo directory (clone if exists, or create empty)
+    const repoDir = this.setupRepoDirectory(normalizedKey);
+    console.log(`Using working directory for ${normalizedKey}: ${repoDir}`);
+
     // Create new session for this repo
     const sessionManager = new SessionManager();
     const session = new ClaudeCodeSession({
       anthropicApiKey: this.config.anthropicApiKey || undefined,
-      workingDirectory: this.config.workingDirectory,
+      workingDirectory: repoDir, // Use repo-specific directory
       sessionManager,
       approvalGate: this.approvalGate,
       agentType: 'claude',
@@ -83,6 +148,7 @@ export class SessionPool extends EventEmitter {
     const pooled: PooledSession = {
       session,
       repoKey: normalizedKey,
+      repoDir, // Store the repo directory
       isProcessing: false,
       lastUsed: new Date(),
       sessionManager,

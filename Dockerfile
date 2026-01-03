@@ -37,6 +37,9 @@ RUN addgroup -g 1001 claude && adduser -u 1001 -G claude -s /bin/sh -D claude
 # Create workdir and set ownership
 RUN mkdir -p /app/workdir /home/claude/.claude && chown -R claude:claude /app /home/claude
 
+# Configure git to use gh CLI for credential authentication
+RUN git config --system credential.helper '!gh auth git-credential'
+
 # Copy Claude Code settings for permission allow-list
 COPY --chown=claude:claude .claude /home/claude/.claude
 

@@ -34,6 +34,7 @@ interface ServerConfig {
   claudeTokenLimit?: number;
   claudeTokenWarningRatio?: number;
   maxConcurrentRepos?: number; // Max repos to process in parallel
+  githubOrg?: string; // Default GitHub org for repos without explicit org
 }
 
 export class OrchestratorServer {
@@ -77,6 +78,7 @@ export class OrchestratorServer {
         workingDirectory: config.workingDirectory,
         tokenLimit: config.claudeTokenLimit,
         tokenWarningRatio: config.claudeTokenWarningRatio,
+        githubOrg: config.githubOrg,
       },
       this.approvalGate
     );
