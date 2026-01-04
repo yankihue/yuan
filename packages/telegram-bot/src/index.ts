@@ -48,6 +48,7 @@ async function main(): Promise<void> {
     orchestratorPort: parseInt(getOptionalEnv('ORCHESTRATOR_PORT', '3000'), 10),
     orchestratorSecret: getRequiredEnv('ORCHESTRATOR_SECRET'),
     allowedUserIds: parseUserIds(process.env.ALLOWED_USER_IDS),
+    creativeAgentUrl: process.env.CREATIVE_AGENT_URL,  // Optional: http://localhost:3003
   });
 
   // Graceful shutdown

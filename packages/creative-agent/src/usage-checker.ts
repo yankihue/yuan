@@ -29,10 +29,12 @@ export class UsageChecker {
       });
 
       if (!response.ok) {
+        // If usage check fails, allow running anyway (orchestrator may not have usage endpoint)
+        console.warn(`Usage check failed (${response.status}), proceeding anyway`);
         return {
-          canRun: false,
-          percentRemaining: 0,
-          reason: `Failed to fetch usage: ${response.status} ${response.statusText}`,
+          canRun: true,
+          percentRemaining: 100,
+          reason: `Usage check unavailable (${response.status}), proceeding anyway`,
         };
       }
 

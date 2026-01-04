@@ -210,6 +210,81 @@ export class CreativeAgentScheduler {
     }
   }
 
+  async handleModify(ideaId: string): Promise<boolean> {
+    const pending = this.pendingIdeas.get(ideaId);
+    if (!pending) {
+      console.log(`No pending idea found for modification: ${ideaId}`);
+      return false;
+    }
+
+    // Mark as awaiting feedback
+    pending.status = 'awaiting_feedback';
+    pending.feedback = pending.feedback || [];
+
+    console.log(`Idea marked for modification: ${pending.idea.title}`);
+    return this.telegram.sendFeedbackPrompt(pending.idea);
+  }
+
+  async handleFeedback(feedbackText: string): Promise<boolean> {
+    // Find the idea that's awaiting feedback
+    const pendingEntry = Array.from(this.pendingIdeas.entries())
+      .find(([, p]) => p.status === 'awaiting_feedback');
+
+    if (!pendingEntry) {
+      console.log('No idea awaiting feedback');
+      return false;
+    }
+
+    const [ideaId, pending] = pendingEntry;
+
+    // Add feedback to the list
+    pending.feedback = pending.feedback || [];
+    pending.feedback.push(feedbackText);
+
+    // Send acknowledgment
+    await this.telegram.sendFeedbackReceived(pending.idea.title);
+
+    // Store original in previous versions if not already
+    if (!pending.previousVersions) {
+      pending.previousVersions = [];
+    }
+    pending.previousVersions.push(pending.idea);
+
+    // Refine the idea using Claude
+    const refinedIdea = await this.ideaGenerator.refineIdea(pending.idea, pending.feedback);
+
+    if (!refinedIdea) {
+      await this.telegram.sendError('Failed to refine idea. Please try again or skip this one.');
+      pending.status = 'pending';  // Reset to pending
+      return false;
+    }
+
+    // Update the pending idea with refined version
+    const oldId = pending.id;
+    pending.id = refinedIdea.id;
+    pending.idea = refinedIdea;
+    pending.status = 'pending';  // Reset to pending, awaiting new decision
+
+    // Update the map with new ID
+    this.pendingIdeas.delete(oldId);
+    this.pendingIdeas.set(refinedIdea.id, pending);
+
+    // Send the refined idea
+    await this.telegram.sendIdea(refinedIdea, true);
+
+    console.log(`Idea refined: ${refinedIdea.title}`);
+    return true;
+  }
+
+  getIdeaAwaitingFeedback(): PendingIdea | null {
+    for (const pending of this.pendingIdeas.values()) {
+      if (pending.status === 'awaiting_feedback') {
+        return pending;
+      }
+    }
+    return null;
+  }
+
   isCurrentlyRunning(): boolean {
     return this.isRunning;
   }

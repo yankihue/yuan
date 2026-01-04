@@ -16,6 +16,7 @@ interface BotConfig {
   orchestratorPort: number;
   orchestratorSecret: string;
   allowedUserIds?: number[];
+  creativeAgentUrl?: string;  // URL for creative-agent service (e.g., http://localhost:3003)
 }
 
 // Live dashboard that shows all active repos
@@ -67,8 +68,18 @@ export class TelegramBot {
       this.orchestratorClient,
       config.telegramBotToken
     );
-    this.textHandler = new TextHandler(this.orchestratorClient, this.voiceHandler);
-    this.callbackHandler = new CallbackHandler(this.orchestratorClient, this.taskThreadMap);
+    this.textHandler = new TextHandler(
+      this.orchestratorClient,
+      this.voiceHandler,
+      config.creativeAgentUrl,
+      config.orchestratorSecret
+    );
+    this.callbackHandler = new CallbackHandler(
+      this.orchestratorClient,
+      this.taskThreadMap,
+      config.creativeAgentUrl,
+      config.orchestratorSecret
+    );
 
     this.setupMiddleware();
     this.setupHandlers();

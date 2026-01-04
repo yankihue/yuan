@@ -125,5 +125,7 @@ export interface PendingIdea {
   id: string;
   idea: ProjectIdea;
   sentAt: Date;
-  status: 'pending' | 'approved' | 'skipped';
+  status: 'pending' | 'approved' | 'skipped' | 'awaiting_feedback';
+  feedback?: string[];  // Accumulated feedback from user
+  previousVersions?: ProjectIdea[];  // Track refinement history
 }
