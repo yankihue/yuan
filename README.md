@@ -284,6 +284,32 @@ Ensure your bearer token has access to:
 ### GitHub rate limiting
 The Creative Agent makes several API calls per run. If rate limited, it will skip that run and try again next cycle.
 
+## Security
+
+**Important:** The `.env` file contains sensitive credentials and should never be committed to version control.
+
+Ensure `.env` is in your `.gitignore`:
+```
+.env
+.env.local
+.env.*.local
+```
+
+### Twitter OAuth Setup
+
+Twitter's bookmarks and likes endpoints require OAuth 2.0 User Context authentication (not App-Only bearer tokens). To set up:
+
+1. Go to [Twitter Developer Portal](https://developer.twitter.com/) → Your App → User authentication settings
+2. Enable OAuth 2.0
+3. Set Type of App to "Web App"
+4. Add callback URL: `http://localhost:3333/callback`
+5. Save your Client ID and Client Secret to `.env`
+6. Run the OAuth flow once to get your access token (see package docs)
+
+### Token Refresh
+
+Twitter access tokens expire after 2 hours. The refresh token can be used to get a new access token. Consider implementing automatic token refresh for production use.
+
 ## License
 
 Private project - all rights reserved.
