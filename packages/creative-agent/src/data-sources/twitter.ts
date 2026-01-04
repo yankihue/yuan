@@ -6,8 +6,9 @@ export class TwitterDataSource {
   private client: TwitterApi;
   private userId: string | null = null;
 
-  constructor(bearerToken: string) {
-    this.client = new TwitterApi(bearerToken);
+  constructor(accessToken: string) {
+    // Use OAuth 2.0 User Context token (not App-Only bearer token)
+    this.client = new TwitterApi(accessToken);
   }
 
   private async getUserId(): Promise<string> {

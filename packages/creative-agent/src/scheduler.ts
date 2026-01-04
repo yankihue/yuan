@@ -30,7 +30,7 @@ export class CreativeAgentScheduler {
 
     // Initialize components
     this.usageChecker = new UsageChecker(config);
-    this.twitterSource = new TwitterDataSource(config.twitter.bearerToken);
+    this.twitterSource = new TwitterDataSource(config.twitter.accessToken);
     this.githubSource = new GitHubDataSource(
       config.github.token,
       config.github.username,

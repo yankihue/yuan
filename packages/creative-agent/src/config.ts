@@ -7,7 +7,7 @@ const DEFAULT_IGNORE_REPOS = ['yanki.dev', 'agentic-art'];
 
 export function loadConfig(): Config {
   const requiredEnvVars = [
-    'TWITTER_BEARER_TOKEN',
+    'TWITTER_ACCESS_TOKEN',
     'GITHUB_TOKEN',
     'GITHUB_USERNAME',
     'ORCHESTRATOR_URL',
@@ -30,7 +30,7 @@ export function loadConfig(): Config {
 
   return {
     twitter: {
-      bearerToken: process.env.TWITTER_BEARER_TOKEN!,
+      accessToken: process.env.TWITTER_ACCESS_TOKEN!,
     },
     github: {
       token: process.env.GITHUB_TOKEN!,

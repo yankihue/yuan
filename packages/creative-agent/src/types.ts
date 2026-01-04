@@ -1,7 +1,7 @@
 // Configuration types
 export interface Config {
   twitter: {
-    bearerToken: string;
+    accessToken: string;
   };
   github: {
     token: string;
