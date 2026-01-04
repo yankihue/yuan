@@ -4,13 +4,19 @@ import type { OrchestratorClient } from '../services/orchestrator.js';
 export class CallbackHandler {
   private orchestratorClient: OrchestratorClient;
   private taskThreadMap: Map<string, { chatId: number; rootMessageId: number }>;
+  private creativeAgentUrl?: string;
+  private authSecret: string;
 
   constructor(
     orchestratorClient: OrchestratorClient,
-    taskThreadMap: Map<string, { chatId: number; rootMessageId: number }>
+    taskThreadMap: Map<string, { chatId: number; rootMessageId: number }>,
+    creativeAgentUrl?: string,
+    authSecret?: string
   ) {
     this.orchestratorClient = orchestratorClient;
     this.taskThreadMap = taskThreadMap;
+    this.creativeAgentUrl = creativeAgentUrl;
+    this.authSecret = authSecret || '';
   }
 
   private async handleQuickAction(action: string, taskId: string | undefined, ctx: Context): Promise<void> {
@@ -57,6 +63,75 @@ export class CallbackHandler {
     }
   }
 
+  private async handleCreativeCallback(action: string, ideaId: string, ctx: Context): Promise<void> {
+    if (!this.creativeAgentUrl) {
+      await ctx.answerCallbackQuery({
+        text: '❌ Creative agent not configured',
+        show_alert: true,
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(`${this.creativeAgentUrl}/callback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.authSecret}`,
+        },
+        body: JSON.stringify({ action, ideaId }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        console.error('Creative agent callback failed:', error);
+        await ctx.answerCallbackQuery({
+          text: '❌ Failed to process. Please try again.',
+          show_alert: true,
+        });
+        return;
+      }
+
+      // Update the message to show the decision
+      const originalMessage = ctx.callbackQuery?.message;
+      let statusText = '';
+      let answerText = '';
+
+      switch (action) {
+        case 'approve':
+          statusText = '✅ Approved - Building...';
+          answerText = 'Building this idea!';
+          break;
+        case 'skip':
+          statusText = '⏭️ Skipped';
+          answerText = 'Idea skipped';
+          break;
+        case 'modify':
+          statusText = '✍️ Awaiting feedback';
+          answerText = 'Send your feedback to modify this idea';
+          break;
+      }
+
+      if (originalMessage && 'text' in originalMessage && action !== 'modify') {
+        try {
+          const updatedText = originalMessage.text + `\n\n*Decision: ${statusText}*`;
+          await ctx.editMessageText(updatedText, { parse_mode: 'Markdown' });
+        } catch (editError) {
+          // Message might not be editable, that's ok
+          console.warn('Could not edit message:', editError);
+        }
+      }
+
+      await ctx.answerCallbackQuery({ text: answerText });
+    } catch (error) {
+      console.error('Failed to send creative callback:', error);
+      await ctx.answerCallbackQuery({
+        text: '❌ Failed to connect to creative agent',
+        show_alert: true,
+      });
+    }
+  }
+
   async handleCallback(ctx: Context): Promise<void> {
     const callbackData = ctx.callbackQuery?.data;
     const userId = ctx.from?.id;
@@ -81,6 +156,12 @@ export class CallbackHandler {
 
     if (action === 'quick') {
       await this.handleQuickAction(identifier, taskId, ctx); // identifier holds quick action
+      return;
+    }
+
+    // Handle creative agent callbacks (creative_approve, creative_modify, creative_skip)
+    if (action.startsWith('creative_')) {
+      await this.handleCreativeCallback(action.replace('creative_', ''), identifier, ctx);
       return;
     }
 

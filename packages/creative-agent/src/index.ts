@@ -52,11 +52,99 @@ async function main() {
       isRunning: scheduler.isCurrentlyRunning(),
       lastRun: scheduler.getLastRunTime(),
       nextRun: scheduler.getNextRunTime(),
+      pendingIdeas: scheduler.getPendingIdeas().length,
+      awaitingFeedback: scheduler.getIdeaAwaitingFeedback() !== null,
       config: {
         cronExpression: config.schedule.cronExpression,
         usageThreshold: config.schedule.usageThreshold,
         lookbackHours: config.schedule.lookbackHours,
       },
+    });
+  });
+
+  // Callback endpoint for telegram-bot to route button presses
+  app.post('/callback', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${config.orchestrator.secret}`) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { action, ideaId } = req.body;
+
+    if (!action || !ideaId) {
+      res.status(400).json({ error: 'Missing action or ideaId' });
+      return;
+    }
+
+    try {
+      let success = false;
+
+      switch (action) {
+        case 'approve':
+          success = await scheduler.handleApproval(ideaId, true);
+          break;
+        case 'skip':
+          success = await scheduler.handleApproval(ideaId, false);
+          break;
+        case 'modify':
+          success = await scheduler.handleModify(ideaId);
+          break;
+        default:
+          res.status(400).json({ error: `Unknown action: ${action}` });
+          return;
+      }
+
+      res.json({ success, action, ideaId });
+    } catch (error) {
+      console.error('Callback handling failed:', error);
+      res.status(500).json({
+        error: 'Callback handling failed',
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Feedback endpoint for telegram-bot to send user feedback messages
+  app.post('/feedback', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${config.orchestrator.secret}`) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { text } = req.body;
+
+    if (!text) {
+      res.status(400).json({ error: 'Missing feedback text' });
+      return;
+    }
+
+    try {
+      const success = await scheduler.handleFeedback(text);
+      res.json({ success });
+    } catch (error) {
+      console.error('Feedback handling failed:', error);
+      res.status(500).json({
+        error: 'Feedback handling failed',
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Check if awaiting feedback (for telegram-bot to know when to route messages)
+  app.get('/awaiting-feedback', (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${config.orchestrator.secret}`) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const pending = scheduler.getIdeaAwaitingFeedback();
+    res.json({
+      awaitingFeedback: pending !== null,
+      ideaTitle: pending?.idea.title || null,
+      ideaId: pending?.id || null,
     });
   });
 

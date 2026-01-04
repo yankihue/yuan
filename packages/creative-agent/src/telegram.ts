@@ -62,20 +62,38 @@ export class TelegramNotifier {
 ${idea.implementationSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}`;
   }
 
-  async sendIdea(idea: ProjectIdea): Promise<boolean> {
-    const text = this.formatIdea(idea);
+  async sendIdea(idea: ProjectIdea, isRefined = false): Promise<boolean> {
+    const refinedPrefix = isRefined ? '🔄 *Refined Idea*\n\n' : '';
+    const text = refinedPrefix + this.formatIdea(idea);
 
-    // Create inline keyboard with approve/skip buttons
+    // Create inline keyboard with approve/modify/skip buttons
     const replyMarkup = {
       inline_keyboard: [
         [
           { text: '✅ Build this', callback_data: `creative_approve:${idea.id}` },
+          { text: '✍️ Modify', callback_data: `creative_modify:${idea.id}` },
           { text: '⏭️ Skip', callback_data: `creative_skip:${idea.id}` },
         ],
       ],
     };
 
     return this.sendMessage(text, replyMarkup);
+  }
+
+  async sendFeedbackPrompt(idea: ProjectIdea): Promise<boolean> {
+    return this.sendMessage(
+      `✍️ *Feedback for:* ${idea.title}\n\n` +
+      `Reply with your feedback to modify this idea. You can:\n` +
+      `• Change the direction or scope\n` +
+      `• Add specific requirements\n` +
+      `• Suggest different technologies\n` +
+      `• Refine the problem/solution\n\n` +
+      `_Just send your feedback as a message and I'll regenerate the idea._`
+    );
+  }
+
+  async sendFeedbackReceived(ideaTitle: string): Promise<boolean> {
+    return this.sendMessage(`💭 Got your feedback on *${ideaTitle}*. Refining the idea...`);
   }
 
   async sendNoIdeas(): Promise<boolean> {

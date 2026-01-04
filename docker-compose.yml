@@ -38,9 +38,12 @@ services:
       - .env
     depends_on:
       - orchestrator
+      - creative-agent
     environment:
       - ORCHESTRATOR_HOST=orchestrator
       - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-3000}
+      # Creative agent for idea feedback (optional)
+      - CREATIVE_AGENT_URL=http://creative-agent:${CREATIVE_AGENT_PORT:-3003}
     restart: unless-stopped
 
   creative-agent:
@@ -69,6 +72,7 @@ services:
       # Schedule (optional)
       - CREATIVE_AGENT_CRON=${CREATIVE_AGENT_CRON:-0 */8 * * *}
       - CREATIVE_AGENT_USAGE_THRESHOLD=${CREATIVE_AGENT_USAGE_THRESHOLD:-50}
+      - CREATIVE_AGENT_LOOKBACK_HOURS=${CREATIVE_AGENT_LOOKBACK_HOURS:-8}
     ports:
       - "${CREATIVE_AGENT_PORT:-3003}:3003"
     restart: unless-stopped

@@ -6,13 +6,19 @@ export class TextHandler {
   private orchestratorClient: OrchestratorClient;
   private voiceHandler: VoiceHandler;
   private pendingInputs: Map<string, { inputId: string; expectedInputFormat?: string }> = new Map();
+  private creativeAgentUrl?: string;
+  private authSecret: string;
 
   constructor(
     orchestratorClient: OrchestratorClient,
-    voiceHandler: VoiceHandler
+    voiceHandler: VoiceHandler,
+    creativeAgentUrl?: string,
+    authSecret?: string
   ) {
     this.orchestratorClient = orchestratorClient;
     this.voiceHandler = voiceHandler;
+    this.creativeAgentUrl = creativeAgentUrl;
+    this.authSecret = authSecret || '';
   }
 
   async handleText(ctx: Context): Promise<void> {
@@ -53,6 +59,14 @@ export class TextHandler {
         await ctx.reply('❌ Sorry, I couldn\'t deliver your response. Please try again.');
       }
       return;
+    }
+
+    // Check if creative-agent is awaiting feedback
+    if (this.creativeAgentUrl) {
+      const feedbackSent = await this.tryRouteToCreativeAgent(instruction, chatId);
+      if (feedbackSent) {
+        return;
+      }
     }
 
     // Check for special commands
@@ -96,6 +110,52 @@ export class TextHandler {
 
   clearPendingInput(userId: string): void {
     this.pendingInputs.delete(userId);
+  }
+
+  private async tryRouteToCreativeAgent(text: string, chatId: number): Promise<boolean> {
+    if (!this.creativeAgentUrl) {
+      return false;
+    }
+
+    try {
+      // Check if creative-agent is awaiting feedback
+      const checkResponse = await fetch(`${this.creativeAgentUrl}/awaiting-feedback`, {
+        headers: {
+          Authorization: `Bearer ${this.authSecret}`,
+        },
+      });
+
+      if (!checkResponse.ok) {
+        return false;
+      }
+
+      const status = await checkResponse.json() as { awaitingFeedback: boolean; ideaTitle?: string };
+
+      if (!status.awaitingFeedback) {
+        return false;
+      }
+
+      // Route the text as feedback to creative-agent
+      const feedbackResponse = await fetch(`${this.creativeAgentUrl}/feedback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.authSecret}`,
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!feedbackResponse.ok) {
+        console.error('Failed to send feedback to creative-agent:', await feedbackResponse.text());
+        return false;
+      }
+
+      console.log(`Routed feedback to creative-agent for idea: ${status.ideaTitle}`);
+      return true;
+    } catch (error) {
+      console.error('Error checking/routing to creative-agent:', error);
+      return false;
+    }
   }
 
   private async handleStatusCommand(ctx: Context, userId: number): Promise<void> {

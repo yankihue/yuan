@@ -2,6 +2,48 @@ import Anthropic from '@anthropic-ai/sdk';
 import { randomUUID } from 'crypto';
 import type { ContentAnalysis, ProjectIdea, IdeaGenerationResult, PersonalData, Config } from './types.js';
 
+const IDEA_REFINEMENT_PROMPT = `You are a creative technologist helping refine a project idea based on user feedback.
+
+Here's the original idea:
+
+<original_idea>
+Title: {{TITLE}}
+Problem: {{PROBLEM}}
+Solution: {{SOLUTION}}
+Complexity: {{COMPLEXITY}}
+Tech Stack: {{TECH_STACK}}
+Implementation Steps:
+{{STEPS}}
+Is Derivative: {{IS_DERIVATIVE}}
+Source Repo: {{SOURCE_REPO}}
+</original_idea>
+
+User feedback on this idea:
+<feedback>
+{{FEEDBACK}}
+</feedback>
+
+Based on the feedback, generate a refined version of this idea. The refined idea should:
+- Address the user's concerns or suggestions
+- Maintain the core concept unless the user explicitly wants to change direction
+- Be realistic and actionable
+
+Return a single JSON object (not an array) with the refined idea:
+
+{
+  "title": "Updated project name if needed",
+  "problemStatement": "1-2 sentences describing the problem",
+  "proposedSolution": "2-3 sentences describing the solution",
+  "implementationSteps": ["Step 1", "Step 2", "Step 3"],
+  "complexity": "small|medium|large",
+  "techStack": ["technology1", "technology2"],
+  "isDerivative": true/false,
+  "sourceRepo": "repo-name or null",
+  "relevanceScore": 0-100
+}
+
+Return ONLY valid JSON, no other text.`;
+
 const IDEA_GENERATION_PROMPT = `You are a creative technologist helping generate project ideas based on someone's interests and current work.
 
 Here's the analysis of their recent activity:
@@ -148,6 +190,58 @@ export class IdeaGenerator {
           githubActivityCount: data.github.activities.length,
         },
       };
+    }
+  }
+
+  async refineIdea(originalIdea: ProjectIdea, feedback: string[]): Promise<ProjectIdea | null> {
+    const prompt = IDEA_REFINEMENT_PROMPT
+      .replace('{{TITLE}}', originalIdea.title)
+      .replace('{{PROBLEM}}', originalIdea.problemStatement)
+      .replace('{{SOLUTION}}', originalIdea.proposedSolution)
+      .replace('{{COMPLEXITY}}', originalIdea.complexity)
+      .replace('{{TECH_STACK}}', originalIdea.techStack.join(', '))
+      .replace('{{STEPS}}', originalIdea.implementationSteps.map((s, i) => `${i + 1}. ${s}`).join('\n'))
+      .replace('{{IS_DERIVATIVE}}', String(originalIdea.isDerivative))
+      .replace('{{SOURCE_REPO}}', originalIdea.sourceRepo || 'N/A (new project)')
+      .replace('{{FEEDBACK}}', feedback.join('\n\n'));
+
+    try {
+      const response = await this.client.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+      });
+
+      const content = response.content[0];
+      if (content.type !== 'text') {
+        throw new Error('Unexpected response type');
+      }
+
+      // Parse JSON object from response
+      const jsonMatch = content.text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('No JSON object found in response');
+      }
+
+      const rawIdea = JSON.parse(jsonMatch[0]) as Omit<ProjectIdea, 'id' | 'sourceData'>;
+
+      // Create refined idea with new ID but preserve source data tracking
+      const refinedIdea: ProjectIdea = {
+        ...rawIdea,
+        id: randomUUID(),
+        sourceData: originalIdea.sourceData,  // Preserve original source tracking
+      };
+
+      console.log(`Refined idea: ${refinedIdea.title}`);
+      return refinedIdea;
+    } catch (error) {
+      console.error('Error refining idea:', error);
+      return null;
     }
   }
 }
