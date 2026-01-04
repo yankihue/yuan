@@ -43,5 +43,35 @@ services:
       - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-3000}
     restart: unless-stopped
 
+  creative-agent:
+    build:
+      context: .
+      target: creative-agent
+    env_file:
+      - .env
+    depends_on:
+      - orchestrator
+    environment:
+      - CREATIVE_AGENT_PORT=${CREATIVE_AGENT_PORT:-3003}
+      - ORCHESTRATOR_URL=http://orchestrator:${ORCHESTRATOR_PORT:-3000}
+      - ORCHESTRATOR_SECRET=${ORCHESTRATOR_SECRET}
+      # Twitter API
+      - TWITTER_BEARER_TOKEN=${TWITTER_BEARER_TOKEN}
+      # GitHub API
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - GITHUB_IGNORE_REPOS=${GITHUB_IGNORE_REPOS:-yanki.dev,agentic-art}
+      # Telegram
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      # Anthropic
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # Schedule (optional)
+      - CREATIVE_AGENT_CRON=${CREATIVE_AGENT_CRON:-0 */8 * * *}
+      - CREATIVE_AGENT_USAGE_THRESHOLD=${CREATIVE_AGENT_USAGE_THRESHOLD:-50}
+    ports:
+      - "${CREATIVE_AGENT_PORT:-3003}:3003"
+    restart: unless-stopped
+
 volumes:
   claude-credentials:

@@ -9,6 +9,9 @@ dist/
 .env.local
 .env.*.local
 
+# OAuth token cache
+.twitter-tokens.json
+
 # IDE
 .vscode/
 .idea/

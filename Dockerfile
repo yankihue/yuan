@@ -7,6 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/orchestrator/package.json packages/orchestrator/package.json
 COPY packages/telegram-bot/package.json packages/telegram-bot/package.json
+COPY packages/creative-agent/package.json packages/creative-agent/package.json
 RUN npm ci
 
 # Copy source and build the workspace packages
@@ -63,4 +64,9 @@ RUN set -eux; \
     ln -s /opt/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper; \
     apk del .whisper-build
 WORKDIR /app/packages/telegram-bot
+CMD ["node", "dist/index.js"]
+
+FROM runtime AS creative-agent
+WORKDIR /app/packages/creative-agent
+EXPOSE 3003
 CMD ["node", "dist/index.js"]
