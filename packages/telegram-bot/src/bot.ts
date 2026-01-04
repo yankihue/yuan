@@ -4,7 +4,7 @@ import { OrchestratorClient } from './services/orchestrator.js';
 import { VoiceHandler } from './handlers/voice.js';
 import { TextHandler } from './handlers/text.js';
 import { CallbackHandler } from './handlers/callback.js';
-import type { AgentType, OrchestratorUpdate, StatusResponse, RepoQueueInfo } from './types.js';
+import type { AgentType, OrchestratorUpdate, StatusResponse, RepoQueueInfo, UsageResponse } from './types.js';
 
 interface BotConfig {
   telegramBotToken: string;
@@ -126,6 +126,7 @@ export class TelegramBot {
         '• /help - Show this help\n' +
         '• /status - Show all active repos and tasks\n' +
         '• /dashboard - Start live dashboard (auto-updates)\n' +
+        '• /usage - Show Claude plan usage\n' +
         '• cancel - Cancel current task\n\n' +
         '*Parallel Processing:*\n' +
         'Tasks for different repos run in parallel. ' +
@@ -183,6 +184,18 @@ export class TelegramBot {
       } catch (error) {
         console.error('Failed to create dashboard:', error);
         await ctx.reply('❌ Failed to create dashboard.');
+      }
+    });
+
+    // Usage command - show Claude plan usage
+    this.bot.command('usage', async (ctx) => {
+      try {
+        const usage = await this.orchestratorClient.getUsage();
+        const usageText = this.formatUsage(usage);
+        await ctx.reply(usageText, { parse_mode: 'Markdown' });
+      } catch (error) {
+        console.error('Failed to get usage:', error);
+        await ctx.reply('❌ Failed to fetch usage information from Claude.');
       }
     });
 
@@ -320,6 +333,29 @@ export class TelegramBot {
     const title = update.taskTitle ? ` • ${update.taskTitle}` : '';
     const repo = update.repoKey ? ` 📂 ${this.formatRepoKey(update.repoKey)}` : '';
     return `${prefix} [${agentLabel}${title}]${repo}\n${update.message}`;
+  }
+
+  private formatUsage(usage: UsageResponse): string {
+    const lines: string[] = [];
+    lines.push('💰 *Claude Plan Usage*\n');
+
+    // Create a visual progress bar
+    const barLength = 20;
+    const filledLength = Math.round((usage.percentUsed / 100) * barLength);
+    const emptyLength = barLength - filledLength;
+    const progressBar = '█'.repeat(filledLength) + '░'.repeat(emptyLength);
+
+    lines.push(`\`${progressBar}\` ${usage.percentUsed.toFixed(1)}%\n`);
+
+    lines.push(`📊 *Daily Limit:* ${usage.dailyLimit}`);
+    lines.push(`📈 *Used:* ${usage.used}`);
+    lines.push(`📉 *Remaining:* ${usage.remaining}`);
+
+    if (usage.resetTime) {
+      lines.push(`\n🔄 *Resets:* ${usage.resetTime}`);
+    }
+
+    return lines.join('\n');
   }
 
   private formatFullStatus(status: StatusResponse, isDashboard = false): string {

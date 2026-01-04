@@ -6,6 +6,7 @@ import type {
   OrchestratorUpdate,
   StatusResponse,
   InputResponse,
+  UsageResponse,
 } from '../types.js';
 
 interface OrchestratorConfig {
@@ -193,6 +194,22 @@ export class OrchestratorClient extends EventEmitter {
     }
 
     return response.json() as Promise<StatusResponse>;
+  }
+
+  async getUsage(): Promise<UsageResponse> {
+    const response = await fetch(`${this.baseUrl}/usage`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.config.secret}`,
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to get usage: ${response.status} ${text}`);
+    }
+
+    return response.json() as Promise<UsageResponse>;
   }
 
   async cancelTasks(userId: string): Promise<CancelResponse> {

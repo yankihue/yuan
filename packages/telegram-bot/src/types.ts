@@ -57,6 +57,16 @@ export interface RepoQueueInfo {
   currentTaskId?: string;
 }
 
+// Usage response from Claude API
+export interface UsageResponse {
+  dailyLimit: string;
+  used: string;
+  remaining: string;
+  percentUsed: number;
+  resetTime?: string;
+  raw?: string;
+}
+
 // Status response from orchestrator
 export interface StatusResponse {
   subAgents: SubAgentStatus[];

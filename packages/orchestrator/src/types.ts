@@ -129,6 +129,16 @@ export interface RepoQueueInfo {
   currentTaskId?: string;
 }
 
+// Usage response from Claude API
+export interface UsageResponse {
+  dailyLimit: string;
+  used: string;
+  remaining: string;
+  percentUsed: number;
+  resetTime?: string;
+  raw?: string; // Raw output from claude command
+}
+
 // Status response
 export interface StatusResponse {
   subAgents: SubAgent[];

@@ -6,10 +6,15 @@ import type {
   ApprovalResponse,
   OrchestratorUpdate,
   StatusResponse,
+  UsageResponse,
   AgentType,
   InputResponse,
   RepoQueueInfo,
 } from './types.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 import { ClaudeCodeSession } from './claude-code/session.js';
 import { SubAgentManager } from './claude-code/sub-agent.js';
 import { CodexSession } from './codex/session.js';
@@ -433,6 +438,26 @@ export class OrchestratorServer {
       }
     });
 
+    // Get Claude usage/billing info
+    this.app.get('/usage', async (_req: Request, res: Response) => {
+      try {
+        const { stdout, stderr } = await execAsync('claude /usage', {
+          timeout: 30000,
+          env: { ...process.env, HOME: '/home/claude' },
+        });
+
+        const output = stdout || stderr;
+        const usage = this.parseUsageOutput(output);
+        res.json(usage);
+      } catch (error) {
+        console.error('Error getting Claude usage:', error);
+        res.status(500).json({
+          error: 'Failed to get usage information',
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
     this.app.post('/cancel', (req: Request, res: Response) => {
       try {
         const { userId } = req.body as { userId?: string };
@@ -606,6 +631,60 @@ export class OrchestratorServer {
         this.pendingInputs.delete(inputId);
       }
     }
+  }
+
+  private parseUsageOutput(output: string): UsageResponse {
+    // Try to parse structured output from claude /usage command
+    // Expected format varies, so we handle multiple formats
+    const lines = output.trim().split('\n');
+
+    let dailyLimit = 'Unknown';
+    let used = 'Unknown';
+    let remaining = 'Unknown';
+    let percentUsed = 0;
+    let resetTime: string | undefined;
+
+    for (const line of lines) {
+      const lowerLine = line.toLowerCase();
+
+      // Match patterns like "Daily limit: $X" or "Limit: X"
+      if (lowerLine.includes('limit') && !lowerLine.includes('remaining')) {
+        const match = line.match(/[\$]?([\d,.]+)/);
+        if (match) dailyLimit = match[0];
+      }
+
+      // Match patterns like "Used: $X" or "Spent: X"
+      if (lowerLine.includes('used') || lowerLine.includes('spent')) {
+        const match = line.match(/[\$]?([\d,.]+)/);
+        if (match) used = match[0];
+      }
+
+      // Match patterns like "Remaining: $X"
+      if (lowerLine.includes('remaining') || lowerLine.includes('left')) {
+        const match = line.match(/[\$]?([\d,.]+)/);
+        if (match) remaining = match[0];
+      }
+
+      // Match percentage patterns
+      if (lowerLine.includes('%')) {
+        const match = line.match(/([\d.]+)%/);
+        if (match) percentUsed = parseFloat(match[1]);
+      }
+
+      // Match reset time patterns
+      if (lowerLine.includes('reset') || lowerLine.includes('renew')) {
+        resetTime = line.replace(/^[^:]+:\s*/, '').trim();
+      }
+    }
+
+    return {
+      dailyLimit,
+      used,
+      remaining,
+      percentUsed,
+      resetTime,
+      raw: output,
+    };
   }
 
   async start(): Promise<void> {
