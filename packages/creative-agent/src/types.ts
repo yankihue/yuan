@@ -2,6 +2,9 @@
 export interface Config {
   twitter: {
     accessToken: string;
+    refreshToken: string;
+    clientId: string;
+    clientSecret: string;
   };
   github: {
     token: string;

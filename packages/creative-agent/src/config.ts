@@ -8,6 +8,9 @@ const DEFAULT_IGNORE_REPOS = ['yanki.dev', 'agentic-art'];
 export function loadConfig(): Config {
   const requiredEnvVars = [
     'TWITTER_ACCESS_TOKEN',
+    'TWITTER_REFRESH_TOKEN',
+    'TWITTER_CLIENT_ID',
+    'TWITTER_CLIENT_SECRET',
     'GITHUB_TOKEN',
     'GITHUB_USERNAME',
     'ORCHESTRATOR_URL',
@@ -31,6 +34,9 @@ export function loadConfig(): Config {
   return {
     twitter: {
       accessToken: process.env.TWITTER_ACCESS_TOKEN!,
+      refreshToken: process.env.TWITTER_REFRESH_TOKEN!,
+      clientId: process.env.TWITTER_CLIENT_ID!,
+      clientSecret: process.env.TWITTER_CLIENT_SECRET!,
     },
     github: {
       token: process.env.GITHUB_TOKEN!,
