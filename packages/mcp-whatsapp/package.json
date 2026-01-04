@@ -1,0 +1,29 @@
+{
+  "name": "@yuan/mcp-whatsapp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCP server for WhatsApp integration using whatsapp-web.js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "mcp-whatsapp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "@types/qrcode-terminal": "^0.12.2",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
