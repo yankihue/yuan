@@ -1,3 +1,5 @@
+INACTIVE - using [Clawdbot] now instead of building this project (https://clawd.bot/) 
+
 # Yuan - Voice-to-Code Orchestrator
 
 Yuan is a personal AI orchestration system that connects voice commands via Telegram to Claude Code, enabling hands-free software development. It also includes a Creative Agent that automatically generates project ideas based on your digital activity.
