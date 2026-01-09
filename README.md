@@ -1,4 +1,4 @@
-INACTIVE - using [Clawdbot] now instead of building this project (https://clawd.bot/) 
+INACTIVE - using [Clawdbot](https://clawd.bot/)  now instead of building this project 
 
 # Yuan - Voice-to-Code Orchestrator
 
